@@ -1,7 +1,224 @@
 {
   "description": "List of sports",
   "source": "https://en.wikipedia.org/wiki/List_of_sports",
-  "sports": [
+  "sports" : [
+  {
+    "name": "Soccer",
+    "description": "A team sport played between two teams of eleven players using a spherical ball.",
+    "type": "Team",
+    "players_per_team": 11,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Tennis",
+    "description": "A racket sport played individually or in doubles, aiming to hit the ball over the net into the opponent's court.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Basketball",
+    "description": "A team sport where two teams of five players try to score by shooting a ball through a hoop.",
+    "type": "Team",
+    "players_per_team": 5,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Badminton",
+    "description": "A racquet sport played in singles or doubles, hitting a shuttlecock across a net.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Cricket",
+    "description": "A bat-and-ball game played between two teams of eleven players.",
+    "type": "Team",
+    "players_per_team": 11,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Swimming",
+    "description": "An individual sport involving movement through water using various strokes.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Volleyball",
+    "description": "A team sport where two teams of six players aim to score by grounding the ball on the opponent's court.",
+    "type": "Team",
+    "players_per_team": 6,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Table Tennis",
+    "description": "A fast-paced sport played individually or in doubles, hitting a lightweight ball across a table.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Boxing",
+    "description": "A combat sport where two individuals fight using punches under strict rules.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Hockey",
+    "description": "A team sport played with sticks and a ball or puck, aiming to score in the opponent's goal.",
+    "type": "Team",
+    "players_per_team": 11,
+    "total_players_in_singles": null
+  },
+
+  {
+    "name": "Archery",
+    "description": "A precision sport where individuals shoot arrows at a target from a set distance.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Baseball",
+    "description": "A bat-and-ball game played between two teams of nine players.",
+    "type": "Team",
+    "players_per_team": 9,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Rugby",
+    "description": "A contact team sport played with an oval ball between two teams.",
+    "type": "Team",
+    "players_per_team": 15,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Golf",
+    "description": "An individual sport where players use clubs to hit balls into a series of holes on a course.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Karate",
+    "description": "A martial art involving striking techniques and defensive movements.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Judo",
+    "description": "A modern martial art and Olympic sport involving throws and grappling.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Kabaddi",
+    "description": "A contact team sport where players tag opponents and return to their half without being tackled.",
+    "type": "Team",
+    "players_per_team": 7,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Fencing",
+    "description": "A combat sport involving swordplay between two individuals.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Rowing",
+    "description": "A water sport where individuals or teams propel a boat using oars.",
+    "type": "Both",
+    "players_per_team": 1,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Cycling",
+    "description": "A sport involving racing bicycles over various terrains and distances.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Handball",
+    "description": "A team sport where players pass and bounce a ball to score in the opponent's goal.",
+    "type": "Team",
+    "players_per_team": 7,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Squash",
+    "description": "A racquet sport played by two players in a four-walled court.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Snooker",
+    "description": "A cue sport played on a large table with balls and pockets.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  },
+  {
+    "name": "Bowling",
+    "description": "A sport where players roll a ball to knock down pins.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Water Polo",
+    "description": "A team water sport played with a ball in a swimming pool.",
+    "type": "Team",
+    "players_per_team": 7,
+    "total_players_in_singles": null
+  },
+  {
+    "name": "Equestrian",
+    "description": "A sport involving horse riding in various disciplines like jumping and dressage.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Shooting",
+    "description": "A precision sport involving firearms or air guns aimed at targets.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Surfing",
+    "description": "A water sport where individuals ride waves using a surfboard.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Skateboarding",
+    "description": "A sport involving riding and performing tricks on a skateboard.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 1
+  },
+  {
+    "name": "Taekwondo",
+    "description": "A Korean martial art focusing on head-height kicks and fast strikes.",
+    "type": "Individual",
+    "players_per_team": null,
+    "total_players_in_singles": 2
+  }
+
+]
+
+
+,
+  "Allsports": [
     "10K run",
     "16-inch softball",
     "43-Man Squamish",

@@ -4,7 +4,7 @@ import bcrypt from "bcrypt";
 const { Schema, model } = mongoose;
 
 const userSchema = new Schema({
-  googleId: { type: String, unique: true, sparse: true,default:null }, // For Google users
+  googleId: { type: String, unique: true, sparse: true }, // For Google users
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true ,sparse : true},
   password: { type: String }, // Only for local users
@@ -16,7 +16,7 @@ const userSchema = new Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'participant'],
+    enum: ['Organizer', 'participant'],
     default: 'participant',
   },
   timestamp: { type: Date, default: Date.now },

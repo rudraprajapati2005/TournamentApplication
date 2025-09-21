@@ -1,12 +1,12 @@
-import { type } from "@testing-library/user-event/dist/type";
-import mongoose  from "mongoose";
-const tournamentSchema = new mongoose.Schema({
+import mongoose from "mongoose";
+const { Schema, model } = mongoose;
+const tournamentSchema = new Schema({
     name: {type: String, required: true},
     date: {type: Date, required: true},
     location: {type: String, required: true},
     participantsLimit: {type: Number, required: true}, // Maximum number of participants/teams
     prizePool: {type: Number, required: true},
-    organizer: {type: Schema.Types.ObjectId, ref: 'User', required: true},
+    organizer: {type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true},
     status: {type: String, enum: ['upcoming', 'ongoing', 'completed', 'cancelled'], default: 'upcoming'},
     description: {type: String},
     sportType: {type: String, required: true},
@@ -26,11 +26,11 @@ const tournamentSchema = new mongoose.Schema({
     totalRounds: {type: Number}, // Calculated based on number of participants
 
     // Relationships
-    matches: [{type: Schema.Types.ObjectId, ref: 'Match'}],
-    participants: [{type: Schema.Types.ObjectId, ref: 'Participant'}],
+    matches: [{type: mongoose.Schema.Types.ObjectId, ref: 'Match'}],
+    participants: [{type: mongoose.Schema.Types.ObjectId, ref: 'Participant'}],
     winners: [{
         position: {type: Number},
-        user: {type: Schema.Types.ObjectId, ref: 'User'}
+        user: {type: mongoose.Schema.Types.ObjectId, ref: 'User'}
     }],
 
     // Stats

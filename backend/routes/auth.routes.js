@@ -200,29 +200,146 @@ router.get('/login/failed', (req, res) => {
   });
 });
 
+// Local login route
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Basic validation
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email, authProvider: 'local' });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Check password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    // Create session
+    req.login(user, (err) => {
+      if (err) {
+        return res.status(500).json({
+          success: false,
+          message: 'Login failed. Please try again.'
+        });
+      }
+
+      // Return success response
+      res.status(200).json({
+        success: true,
+        message: 'Login successful',
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          authProvider: user.authProvider
+        }
+      });
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Login failed. Please try again.'
+    });
+  }
+});
+
 //logout route
 router.get('/logout', (req, res) => {
   req.logout((err) => {
-    if (err) return res.status(500).json({ error: 'Logout failed' });
-    req.session.destroy((err) => {
-      req.clearCookie('connect.sid', { path: '/' });
-      if (err) return res.status(500).json({ error: 'Session destruction failed' });
+    if (err) {
+      return res.status(500).json({ success: false, message: 'Logout failed', error: err?.message });
+    }
+
+    // Destroy the session, then clear the cookie and send response
+    req.session.destroy((destroyErr) => {
+      // Always attempt to clear cookie on the response
+      res.clearCookie('connect.sid', { path: '/' });
+
+      if (destroyErr) {
+        return res.status(500).json({ success: false, message: 'Session destruction failed', error: destroyErr?.message });
+      }
+
+      return res.status(200).json({ success: true, message: 'Logout successful' });
     });
-    res.status(200).json({ message: 'Logout successful' });
   });
 });
 
 router.post('/register', async (req, res) => {
   console.log("Received registration request:", req.body);
   const { name, email, password, role } = req.body;
+  
+  // Basic validation
+  if (!name || !email || !password) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Name, email, and password are required' 
+    });
+  }
+
+  // Email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Please enter a valid email address' 
+    });
+  }
+
+  // Password length validation
+  if (password.length < 6) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Password must be at least 6 characters long' 
+    });
+  }
+
   try {
     const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ error: 'Email already registered' });
+    if (existingUser) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email already registered. Please use a different email or try logging in.' 
+      });
+    }
 
-    const newUser = await User.create({ name, email, password, role });
-    res.status(201).json({ message: 'User registered successfully' });
+    const newUser = await User.create({ 
+      name, 
+      email, 
+      password, 
+      role: role || 'participant',
+      authProvider: 'local'
+    });
+    
+    res.status(201).json({ 
+      success: true, 
+      message: 'Registration successful! You can now log in.' 
+    });
   } catch (err) {
-    res.status(500).json({ error: 'Registration failed' });
+    console.error('Registration error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Registration failed. Please try again.' 
+    });
   }
 });
 
