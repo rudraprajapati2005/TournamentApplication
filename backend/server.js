@@ -12,6 +12,9 @@ import './models/User.model.js';
 import './models/Tournament.model.js';
 import './models/Match.model.js';
 import './models/Participant.model.js';
+import './models/Team.model.js';
+import './models/JoinRequest.model.js';
+import './models/Score.model.js';
 
 // Initialize passport
 import './passport.js';
@@ -21,6 +24,10 @@ import authRoutes from './routes/auth.routes.js';
 import sportRoutes from './routes/sport.routes.js';
 import roleRoutes from './routes/role.routes.js';
 import tournamentRoutes from './routes/tournament.routes.js';
+import teamRoutes from './routes/team.routes.js';
+import joinRequestRoutes from './routes/joinRequest.routes.js';
+import matchRoutes from './routes/match.routes.js';
+import shuffleRoutes from './routes/shuffle.routes.js';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 
@@ -67,6 +74,10 @@ app.use('/auth', authRoutes);
 app.use('/sports', sportRoutes);
 app.use('/role', roleRoutes);
 app.use('/tournaments', tournamentRoutes);
+app.use('/teams', teamRoutes);
+app.use('/join-requests', joinRequestRoutes);
+app.use('/matches', matchRoutes);
+app.use('/utils', shuffleRoutes);
 
 // 6. Test endpoint
 app.get('/', (req, res) => {

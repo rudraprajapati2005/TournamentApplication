@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
     try {
         const tournaments = await Tournament.find()
             .populate('organizer', 'name email')
-            .sort({ date: -1 });
+            .sort({ startDate: -1, date: -1 });
         
         res.json({
             success: true,
@@ -53,7 +53,7 @@ router.get('/latest', async (req, res) => {
     try {
         const tournaments = await Tournament.find({ status: 'upcoming' })
             .populate('organizer', 'name email')
-            .sort({ date: 1 })
+            .sort({ startDate: 1, date: 1 })
             .limit(6);
         
         res.json({
@@ -75,7 +75,7 @@ router.get('/ongoing', async (req, res) => {
     try {
         const tournaments = await Tournament.find({ status: 'ongoing' })
             .populate('organizer', 'name email')
-            .sort({ date: -1 })
+            .sort({ startDate: -1, date: -1 })
             .limit(6);
         
         res.json({
@@ -107,7 +107,7 @@ router.get('/organized/:userId', isAuthenticated, async (req, res) => {
 
         const tournaments = await Tournament.find({ organizer: userId })
             .populate('organizer', 'name email')
-            .sort({ date: -1 });
+            .sort({ startDate: -1, date: -1 });
         
         res.json({
             success: true,
@@ -124,17 +124,26 @@ router.get('/organized/:userId', isAuthenticated, async (req, res) => {
 });
 
 // Get tournament by ID
-router.get('/:id?', async (req, res) => {
+router.get('/:id', async (req, res) => {
     try {
-        const tournament = await Tournament.findById(req.params.id)
+        let tournament = await Tournament.findById(req.params.id)
             .populate('organizer', 'name email')
-            .populate('participants')
+            .populate({
+                path: 'participants',
+                populate: { path: 'user', select: 'name email' }
+            })
             .populate({
                 path: 'matches',
-                populate: {
-                    path: 'participants.user',
-                    select: 'name email'
-                }
+                populate: [
+                    {
+                        path: 'participants.user',
+                        select: 'name email'
+                    },
+                    {
+                        path: 'teams',
+                        select: 'name'
+                    }
+                ]
             });
         
         if (!tournament) {
@@ -144,10 +153,16 @@ router.get('/:id?', async (req, res) => {
             });
         }
         
-        res.json({
-            success: true,
-            tournament
-        });
+        // Auto-update status if startDate passed (date kept for backward compatibility)
+        if (tournament.status === 'upcoming') {
+            const start = new Date(tournament.startDate || tournament.date);
+            if (!isNaN(start.getTime()) && new Date() >= start) {
+                tournament.status = 'ongoing';
+                await tournament.save();
+            }
+        }
+
+        res.json({ success: true, tournament });
     } catch (error) {
         console.error('Error fetching tournament:', error);
         res.status(500).json({
@@ -178,7 +193,26 @@ router.put('/:id', isAuthenticated, isOrganizer, async (req, res) => {
             });
         }
 
-        // Check if tournament can be edited (not ongoing or completed)
+        // Allow status change to completed/cancelled at any time, and only status
+        const requestedStatus = req.body?.status;
+        const isTerminalStatus = requestedStatus === 'completed' || requestedStatus === 'cancelled';
+        if (isTerminalStatus) {
+            // Only allow changing status field; ignore/deny other fields
+            const allowedBody = { status: requestedStatus };
+            const updatedTournament = await Tournament.findByIdAndUpdate(
+                req.params.id,
+                allowedBody,
+                { new: true, runValidators: true }
+            ).populate('organizer', 'name email');
+
+            return res.json({
+                success: true,
+                message: 'Tournament status updated',
+                tournament: updatedTournament
+            });
+        }
+
+        // Otherwise, regular edits are only allowed if not ongoing or completed
         if (tournament.status === 'ongoing' || tournament.status === 'completed') {
             return res.status(400).json({
                 success: false,
@@ -186,7 +220,7 @@ router.put('/:id', isAuthenticated, isOrganizer, async (req, res) => {
             });
         }
 
-        // Update tournament
+        // Update tournament with provided fields
         const updatedTournament = await Tournament.findByIdAndUpdate(
             req.params.id,
             req.body,
@@ -272,6 +306,14 @@ router.post('/:id/join', isAuthenticated, async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: 'Tournament not found'
+            });
+        }
+
+        // Disallow individual join for team-based tournaments
+        if (tournament.format?.type === 'team') {
+            return res.status(400).json({
+                success: false,
+                message: 'This is a team-based tournament. Please create or join a team.'
             });
         }
 
@@ -462,7 +504,7 @@ router.get('/available', isAuthenticated, async (req, res) => {
         // Get all upcoming tournaments
         const tournaments = await Tournament.find({ status: 'upcoming' })
             .populate('organizer', 'name email')
-            .sort({ date: 1 });
+            .sort({ startDate: 1, date: 1 });
 
         // Get user's current participations
         const participations = await Participant.find({ user: userId })
