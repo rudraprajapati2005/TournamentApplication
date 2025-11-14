@@ -1,5 +1,6 @@
 import express from 'express';
 import Tournament from '../models/Tournament.model.js';
+import Score from '../models/Score.model.js';
 import Participant from '../models/Participant.model.js';
 import User from '../models/User.model.js';
 import { isAuthenticated, isOrganizer } from '../middleware/auth.middleware.js';
@@ -128,6 +129,7 @@ router.get('/:id', async (req, res) => {
     try {
         let tournament = await Tournament.findById(req.params.id)
             .populate('organizer', 'name email')
+            .populate('winners.user', 'name email')
             .populate({
                 path: 'participants',
                 populate: { path: 'user', select: 'name email' }
@@ -136,8 +138,8 @@ router.get('/:id', async (req, res) => {
                 path: 'matches',
                 populate: [
                     {
-                        path: 'participants.user',
-                        select: 'name email'
+                        path: 'participants',
+                        populate: { path: 'user', select: 'name email' }
                     },
                     {
                         path: 'teams',
@@ -162,7 +164,29 @@ router.get('/:id', async (req, res) => {
             }
         }
 
-        res.json({ success: true, tournament });
+        // Attach scores per match so UI can prefill inputs
+        const allScores = await Score.find({ tournament: tournament._id });
+        const scoresByMatch = {};
+        for (const s of allScores) {
+            const matchId = s.match?.toString?.();
+            if (!matchId) continue;
+            const entityId = (s.team?.toString?.()) || (s.player?.toString?.()); // team for team-matches, user for individual
+            if (!entityId) continue;
+            if (!scoresByMatch[matchId]) scoresByMatch[matchId] = {};
+            scoresByMatch[matchId][entityId] = s.points || 0;
+        }
+
+        const tObj = tournament.toObject();
+        const matchesWithScores = (tObj.matches || []).map(m => {
+            const mid = m._id?.toString?.();
+            const scores = scoresByMatch[mid] || {};
+            // also mirror under existing match.score field name for redundancy
+            const next = { ...m, scores };
+            next.score = scores;
+            return next;
+        });
+
+        res.json({ success: true, tournament: { ...tObj, matches: matchesWithScores } });
     } catch (error) {
         console.error('Error fetching tournament:', error);
         res.status(500).json({
@@ -581,6 +605,137 @@ router.get('/participated', isAuthenticated, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error fetching participated tournaments',
+            error: error.message
+        });
+    }
+});
+
+// Declare top players manually (by organizer or organizing team)
+router.post('/:id/declare-winners', isAuthenticated, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { winners } = req.body;
+        
+        const tournament = await Tournament.findById(id);
+        
+        if (!tournament) {
+            return res.status(404).json({
+                success: false,
+                message: 'Tournament not found'
+            });
+        }
+
+        // Check if user is organizer
+        const isOrganizer = tournament.organizer.toString() === req.user._id.toString();
+        
+        // Check if user is organizing team member
+        let isOrganizingMember = false;
+        if (!isOrganizer) {
+            const Team = (await import('../models/Team.model.js')).default;
+            const organizingTeam = await Team.findOne({ 
+                tournament: id, 
+                isOrganizing: true 
+            });
+            
+            if (organizingTeam) {
+                if (organizingTeam.leader?.toString() === req.user._id.toString()) {
+                    isOrganizingMember = true;
+                } else if (organizingTeam.members?.some(m => m.user?.toString() === req.user._id.toString())) {
+                    isOrganizingMember = true;
+                }
+            }
+        }
+
+        if (!isOrganizer && !isOrganizingMember) {
+            return res.status(403).json({
+                success: false,
+                message: 'Only organizers or organizing team members can declare winners'
+            });
+        }
+
+        // Validate winners array
+        if (!Array.isArray(winners) || winners.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Winners array is required'
+            });
+        }
+
+        // Validate and process winners
+        const processedWinners = [];
+        for (const winner of winners) {
+            if (!winner.position || !winner.user) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Each winner must have position and user fields'
+                });
+            }
+            
+            // Check if position is valid (1 = winner, 2 = runner-up, 3 = second runner-up, etc.)
+            if (winner.position < 1) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Position must be at least 1'
+                });
+            }
+
+            processedWinners.push({
+                position: winner.position,
+                user: winner.user
+            });
+        }
+
+        // Update tournament with winners
+        tournament.winners = processedWinners;
+        
+        // Optionally mark tournament as completed
+        if (tournament.status !== 'completed') {
+            tournament.status = 'completed';
+        }
+        
+        await tournament.save();
+
+        // Update Participant records for winners
+        const winnerUserIds = processedWinners.map(w => w.user.toString());
+        
+        // Mark winners as 'winner' status
+        await Participant.updateMany(
+            { 
+                tournament: id, 
+                user: { $in: winnerUserIds } 
+            },
+            { 
+                $set: { status: 'winner' } 
+            }
+        );
+
+        // Mark all other participants as 'eliminated' if they're still active/registered
+        await Participant.updateMany(
+            { 
+                tournament: id, 
+                user: { $nin: winnerUserIds },
+                status: { $in: ['registered', 'active'] }
+            },
+            { 
+                $set: { status: 'eliminated' } 
+            }
+        );
+
+        const updatedTournament = await Tournament.findById(id)
+            .populate('organizer', 'name email')
+            .populate('winners.user', 'name email');
+
+        res.json({
+            success: true,
+            message: 'Winners declared successfully',
+            tournament: updatedTournament
+        });
+
+    } catch (error) {
+        console.error('Error declaring winners:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error declaring winners',
             error: error.message
         });
     }

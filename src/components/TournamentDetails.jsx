@@ -7,7 +7,7 @@ import './TournamentDetails.css';
 const TournamentDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, triggerRefresh, checkAuthStatus } = useAuth();
   const [tournament, setTournament] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -30,6 +30,11 @@ const TournamentDetails = () => {
   const [activeTab, setActiveTab] = useState('description');
   const [matchScores, setMatchScores] = useState({});
   const [updatingScores, setUpdatingScores] = useState({});
+  const [showWinnerDeclaration, setShowWinnerDeclaration] = useState(false);
+  const [winners, setWinners] = useState([{ position: 1, user: null }]);
+  const [declaringWinners, setDeclaringWinners] = useState(false);
+  const [participantSearch, setParticipantSearch] = useState('');
+  const [participantSuggestions, setParticipantSuggestions] = useState([]);
 
   useEffect(() => {
     fetchTournamentDetails();
@@ -39,6 +44,18 @@ const TournamentDetails = () => {
     loadOrganizingTeam();
     loadMyTeam();
   }, [id, user]);
+
+  // Initialize score inputs from server-provided scores map
+  useEffect(() => {
+    if (!tournament || !Array.isArray(tournament.matches)) return;
+    const initial = {};
+    for (const m of tournament.matches) {
+      if (m && m._id && m.scores) {
+        initial[m._id] = { ...m.scores };
+      }
+    }
+    setMatchScores(initial);
+  }, [tournament]);
 
   const fetchTournamentDetails = async () => {
     try {
@@ -239,17 +256,31 @@ const TournamentDetails = () => {
     }
   };
 
-  const updateMatchScore = async (matchId, participantId, teamId, points, metrics) => {
+  const updateMatchScore = async (matchId, participantUserId, teamId, points, metrics) => {
     try {
       setUpdatingScores(prev => ({ ...prev, [matchId]: true }));
       await api.post(`/matches/${matchId}/score`, {
-        playerId: participantId,
-        teamId: teamId,
-        points: points,
-        metrics: metrics
+        playerId: participantUserId,
+        teamId,
+        points,
+        metrics
       });
-      await fetchTournamentDetails();
-      alert('Score updated successfully');
+      // Optimistic UI update: reflect saved points without refetching entire tournament
+      const key = teamId || participantUserId;
+      setMatchScores(prev => ({
+        ...prev,
+        [matchId]: { ...(prev[matchId] || {}), [key]: points }
+      }));
+      setTournament(prev => {
+        if (!prev) return prev;
+        const updatedMatches = (prev.matches || []).map(m => {
+          if (m._id !== matchId) return m;
+          const nextScores = { ...(m.scores || {}) };
+          nextScores[key] = points;
+          return { ...m, scores: nextScores };
+        });
+        return { ...prev, matches: updatedMatches };
+      });
     } catch (e) {
       alert(e.message || 'Failed to update score');
     } finally {
@@ -303,15 +334,101 @@ const TournamentDetails = () => {
   const declareWinner = async (matchId, overrideWinnerId, overrideModel) => {
     try {
       setUpdatingScores(prev => ({ ...prev, [matchId]: true }));
-      await api.post(`/matches/${matchId}/declare`, overrideWinnerId && overrideModel ? { overrideWinnerId, overrideModel } : {});
-      await fetchTournamentDetails();
-      alert('Winner declared');
+      const resp = await api.post(`/matches/${matchId}/declare`, overrideWinnerId && overrideModel ? { overrideWinnerId, overrideModel } : {});
+      // Optimistically update the match status and winner so page doesn't reload
+      const updatedMatch = resp.match || resp.data?.match; // api wrapper may unwrap
+      setTournament(prev => {
+        if (!prev) return prev;
+        const updatedMatches = (prev.matches || []).map(m => m._id === matchId ? { ...m, status: 'completed', winner: updatedMatch?.winner || overrideWinnerId, winnerModel: updatedMatch?.winnerModel || overrideModel } : m);
+        return { ...prev, matches: updatedMatches };
+      });
     } catch (e) {
       alert(e.response?.data?.message || e.message || 'Failed to declare winner');
     } finally {
       setUpdatingScores(prev => ({ ...prev, [matchId]: false }));
     }
   };
+
+  // Handler for declaring top players
+  const handleDeclareWinners = async () => {
+    try {
+      setDeclaringWinners(true);
+      
+      // Validate winners
+      const validWinners = winners.filter(w => w.user);
+      if (validWinners.length === 0) {
+        alert('Please select at least one winner');
+        setDeclaringWinners(false);
+        return;
+      }
+
+      // Sort winners by position
+      const sortedWinners = validWinners.sort((a, b) => a.position - b.position);
+
+      const data = await api.post(`/tournaments/${id}/declare-winners`, {
+        winners: sortedWinners.map(w => ({
+          position: w.position,
+          user: w.user
+        }))
+      });
+
+      if (data.success) {
+        setTournament(data.tournament);
+        setShowWinnerDeclaration(false);
+        alert('Winners declared successfully!');
+        
+        // Refresh user data to update participation status and statistics
+        // This ensures winners see their updated status in the dashboard
+        setTimeout(async () => {
+          await checkAuthStatus();
+          triggerRefresh();
+        }, 500);
+      }
+    } catch (e) {
+      alert(e.response?.data?.message || e.message || 'Failed to declare winners');
+    } finally {
+      setDeclaringWinners(false);
+    }
+  };
+
+  // Add a winner position
+  const addWinnerPosition = () => {
+    setWinners([...winners, { position: winners.length + 1, user: null }]);
+  };
+
+  // Remove a winner position
+  const removeWinnerPosition = (index) => {
+    const newWinners = winners.filter((_, i) => i !== index);
+    // Re-number positions
+    const renumbered = newWinners.map((w, i) => ({ ...w, position: i + 1 }));
+    setWinners(renumbered);
+  };
+
+  // Set winner user
+  const setWinnerUser = (index, userId) => {
+    const newWinners = [...winners];
+    newWinners[index].user = userId;
+    setWinners(newWinners);
+    setParticipantSearch('');
+    setParticipantSuggestions([]);
+  };
+
+  // Search participants when typing
+  useEffect(() => {
+    if (!participantSearch || participantSearch.length < 2) {
+      setParticipantSuggestions([]);
+      return;
+    }
+
+    if (!tournament || !tournament.participants) return;
+
+    const filtered = tournament.participants.filter(p => 
+      p.user?.name?.toLowerCase().includes(participantSearch.toLowerCase()) ||
+      p.user?.email?.toLowerCase().includes(participantSearch.toLowerCase())
+    );
+
+    setParticipantSuggestions(filtered);
+  }, [participantSearch, tournament]);
 
   if (loading) {
     return (
@@ -336,6 +453,168 @@ const TournamentDetails = () => {
 
   return (
     <div className="tournament-page">
+      {/* Winner Declaration Modal */}
+      {showWinnerDeclaration && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }} onClick={() => setShowWinnerDeclaration(false)}>
+          <div style={{
+            background: 'white',
+            padding: '2rem',
+            borderRadius: '12px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            position: 'relative'
+          }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginTop: 0 }}>Declare Tournament Winners</h2>
+            <p style={{ color: '#64748b', marginBottom: '1.5rem' }}>
+              Manually declare the top players in this tournament (1st, 2nd, 3rd place, etc.)
+            </p>
+
+            {winners.map((winner, index) => (
+              <div key={index} style={{
+                marginBottom: '1rem',
+                padding: '1rem',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+                  <span style={{ fontWeight: 600 }}>Position {index === 0 ? '1st (Winner)' : index === 1 ? '2nd (Runner-up)' : index === 2 ? '3rd (Second Runner-up)' : `${index + 1}th`}</span>
+                  {winners.length > 1 && (
+                    <button 
+                      onClick={() => removeWinnerPosition(index)}
+                      style={{
+                        background: '#ef4444',
+                        color: 'white',
+                        border: 'none',
+                        padding: '0.25rem 0.5rem',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.875rem'
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    placeholder={`Search for participant`}
+                    value={winner.user ? tournament.participants.find(p => p.user._id === winner.user)?.user.name : participantSearch}
+                    onChange={(e) => {
+                      setParticipantSearch(e.target.value);
+                      if (!e.target.value) {
+                        const newWinners = [...winners];
+                        newWinners[index].user = null;
+                        setWinners(newWinners);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px'
+                    }}
+                  />
+                  {participantSuggestions.length > 0 && participantSearch && !winner.user && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: 'white',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      boxShadow: '0 8px 20px rgba(0,0,0,0.08)',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      zIndex: 1000,
+                      marginTop: '4px'
+                    }}>
+                      {participantSuggestions.map(p => (
+                        <div
+                          key={p.user._id}
+                          onClick={() => setWinnerUser(index, p.user._id)}
+                          style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer'
+                          }}
+                          onMouseEnter={(e) => e.target.style.background = '#f3f4f6'}
+                          onMouseLeave={(e) => e.target.style.background = 'white'}
+                        >
+                          {p.user.name} ({p.user.email})
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+              <button
+                onClick={addWinnerPosition}
+                style={{
+                  background: '#64748b',
+                  color: 'white',
+                  border: 'none',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem'
+                }}
+              >
+                Add Position
+              </button>
+              <div style={{ flex: 1 }} />
+              <button
+                onClick={() => setShowWinnerDeclaration(false)}
+                style={{
+                  background: 'white',
+                  color: '#64748b',
+                  border: '1px solid #d1d5db',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  marginRight: '0.5rem'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeclareWinners}
+                disabled={declaringWinners}
+                style={{
+                  background: '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  padding: '0.5rem 1.5rem',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  fontWeight: 600
+                }}
+              >
+                {declaringWinners ? 'Declaring...' : 'Declare Winners'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Organizer Panel */}
       {canEditTournament(tournament) && (
         <div className="organizer-panel">
@@ -551,6 +830,58 @@ const TournamentDetails = () => {
             </div>
           </div>
 
+          {tournament.winners && tournament.winners.length > 0 && (
+            <div className="info-section" style={{ background: 'linear-gradient(135deg, #fef3c7, #fde68a)' }}>
+              <h3 style={{ color: '#92400e' }}>🏆 Tournament Winners</h3>
+              <div className="winners-list" style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                gap: '1rem',
+                marginTop: '1rem'
+              }}>
+                {tournament.winners
+                  .sort((a, b) => a.position - b.position)
+                  .map((winner, index) => (
+                    <div key={index} style={{
+                      padding: '1rem',
+                      background: 'white',
+                      borderRadius: '8px',
+                      border: '1px solid #f59e0b',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                    }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        marginBottom: '0.5rem'
+                      }}>
+                        {index === 0 && <span style={{ fontSize: '1.5rem' }}>🥇</span>}
+                        {index === 1 && <span style={{ fontSize: '1.5rem' }}>🥈</span>}
+                        {index === 2 && <span style={{ fontSize: '1.5rem' }}>🥉</span>}
+                        {index > 2 && <span style={{ fontSize: '1.25rem' }}>🏅</span>}
+                        <span style={{
+                          fontWeight: 700,
+                          color: '#92400e',
+                          fontSize: '0.875rem',
+                          textTransform: 'uppercase'
+                        }}>
+                          {index === 0 ? 'Winner' : index === 1 ? 'Runner-up' : index === 2 ? 'Second Runner-up' : `${winner.position}th Place`}
+                        </span>
+                      </div>
+                      <div style={{ fontWeight: 600, color: '#1e293b' }}>
+                        {winner.user?.name || 'Unknown User'}
+                      </div>
+                      {winner.user?.email && (
+                        <div style={{ fontSize: '0.875rem', color: '#64748b' }}>
+                          {winner.user.email}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           {tournament.participants && tournament.participants.length > 0 && (
             <div className="info-section">
               <h3>Participants ({tournament.participants.length})</h3>
@@ -603,6 +934,28 @@ const TournamentDetails = () => {
             </Link>
           )}
 
+          {/* Show declare winners button for organizers or organizing team members */}
+          {(canEditTournament(tournament) || (tournament && isOrganizingMember())) && (
+            <button 
+              className="declare-winners-btn"
+              onClick={() => setShowWinnerDeclaration(true)}
+              style={{
+                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                color: 'white',
+                border: 'none',
+                padding: '1rem 1.5rem',
+                borderRadius: '8px',
+                fontSize: '1rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                width: '100%',
+                marginTop: canEditTournament(tournament) ? '0.5rem' : '0'
+              }}
+            >
+              Declare Winners
+            </button>
+          )}
+
           {!user && (
             <Link to="/login" className="login-to-join-btn">
               Login to Join Tournament
@@ -629,8 +982,11 @@ const TournamentDetails = () => {
                     {user?._id === myTeam.leader?._id && (
                       <div className="otv-add">
                         <form onSubmit={inviteToMyTeam} className="ot-row">
+                          
                           <input className="ot-input" placeholder="Invite by email" value={teamInviteEmail} onChange={(e) => setTeamInviteEmail(e.target.value)} />
+                          
                           <button className="op-btn primary" type="submit" disabled={teamLoading}>{teamLoading ? 'Sending...' : 'Send Invite'}</button>
+                          
                         </form>
                       </div>
                     )}
@@ -727,13 +1083,19 @@ const TournamentDetails = () => {
                                       type="number"
                                       className="score-input"
                                       placeholder="Points"
-                                      value={(matchScores[m._id]?.[m.participants?.[0]?._id] ?? '')}
-                                      onChange={(e) => setLocalScore(m._id, m.participants?.[0]?._id, e.target.value)}
+                                      value={(matchScores[m._id]?.[m.participants?.[0]?.user?._id] ?? '')}
+                                      onChange={(e) => setLocalScore(m._id, m.participants?.[0]?.user?._id, e.target.value)}
                                     />
                                     <button
                                       className="update-score-btn"
                                       disabled={updatingScores[m._id]}
-                                      onClick={() => updateMatchScore(m._id, m.participants?.[0]?._id, undefined, Number(matchScores[m._id]?.[m.participants?.[0]?._id] || 0), {})}
+                                      onClick={() => updateMatchScore(
+                                        m._id,
+                                        m.participants?.[0]?.user?._id,
+                                        undefined,
+                                        Number(matchScores[m._id]?.[m.participants?.[0]?.user?._id] || 0),
+                                        {}
+                                      )}
                                     >Save</button>
                                   </div>
                                 </div>
@@ -744,13 +1106,19 @@ const TournamentDetails = () => {
                                       type="number"
                                       className="score-input"
                                       placeholder="Points"
-                                      value={(matchScores[m._id]?.[m.participants?.[1]?._id] ?? '')}
-                                      onChange={(e) => setLocalScore(m._id, m.participants?.[1]?._id, e.target.value)}
+                                      value={(matchScores[m._id]?.[m.participants?.[1]?.user?._id] ?? '')}
+                                      onChange={(e) => setLocalScore(m._id, m.participants?.[1]?.user?._id, e.target.value)}
                                     />
                                     <button
                                       className="update-score-btn"
                                       disabled={updatingScores[m._id]}
-                                      onClick={() => updateMatchScore(m._id, m.participants?.[1]?._id, undefined, Number(matchScores[m._id]?.[m.participants?.[1]?._id] || 0), {})}
+                                      onClick={() => updateMatchScore(
+                                        m._id,
+                                        m.participants?.[1]?.user?._id,
+                                        undefined,
+                                        Number(matchScores[m._id]?.[m.participants?.[1]?.user?._id] || 0),
+                                        {}
+                                      )}
                                     >Save</button>
                                   </div>
                                 </div>

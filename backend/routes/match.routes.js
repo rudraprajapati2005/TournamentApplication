@@ -122,14 +122,35 @@ router.post('/:matchId/score', isAuthenticated, async (req, res) => {
             .populate({ path: 'teams', populate: { path: 'members.user', select: 'name' } });
         if (!match) return res.status(404).json({ success: false, message: 'Match not found' });
 
-        // Authorization: only players in the match (or members of a team in the match) can submit
+        // Authorization: allow tournament organizer, organizing team members, or actual participants
         let isAllowed = false;
-        if (match.matchType === 'individual') {
-            isAllowed = (match.participants || []).some(p => p.user?.toString?.() === req.user._id.toString());
-        } else {
-            for (const t of (match.teams || [])) {
-                if (t.members?.some(m => m.user?.toString?.() === req.user._id.toString())) {
-                    isAllowed = true; break;
+
+        // Organizer can submit
+        if (match.tournament?.organizer?.toString?.() === req.user._id.toString()) {
+            isAllowed = true;
+        }
+
+        // Organizing team members can submit
+        if (!isAllowed) {
+            const orgTeam = await Team.findOne({ tournament: match.tournament._id, isOrganizing: true });
+            if (orgTeam) {
+                if (orgTeam.leader?.toString?.() === req.user._id.toString()) {
+                    isAllowed = true;
+                } else if ((orgTeam.members || []).some(m => m.user?.toString?.() === req.user._id.toString())) {
+                    isAllowed = true;
+                }
+            }
+        }
+
+        // Players in the match (individual) or team members (team) can submit
+        if (!isAllowed) {
+            if (match.matchType === 'individual') {
+                isAllowed = (match.participants || []).some(p => p.user?.toString?.() === req.user._id.toString());
+            } else {
+                for (const t of (match.teams || [])) {
+                    if (t.members?.some(m => m.user?.toString?.() === req.user._id.toString())) {
+                        isAllowed = true; break;
+                    }
                 }
             }
         }
@@ -137,9 +158,21 @@ router.post('/:matchId/score', isAuthenticated, async (req, res) => {
             return res.status(403).json({ success: false, message: 'You are not a participant in this match' });
         }
 
+        // Build unique filter depending on match type / payload
+        const filter = teamId ? { match: matchId, team: teamId } : { match: matchId, player: playerId };
+        const update = {
+            $set: {
+                tournament: match.tournament._id,
+                points: points || 0,
+                metrics: metrics || {},
+                createdBy: req.user._id,
+                team: teamId || undefined,
+                player: playerId || undefined
+            }
+        };
         const score = await Score.findOneAndUpdate(
-            { match: matchId, player: playerId },
-            { $set: { team: teamId, tournament: match.tournament._id, points: points || 0, metrics: metrics || {} , createdBy: req.user._id } },
+            filter,
+            update,
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
         return res.json({ success: true, score });

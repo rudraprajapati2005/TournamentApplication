@@ -6,6 +6,9 @@
 // Routes for creating the ENDPOINTS ( API )
 import express from 'express';
 import User from '../models/User.model.js';
+import Participant from '../models/Participant.model.js';
+import Match from '../models/Match.model.js';
+import Score from '../models/Score.model.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import passport from 'passport';
@@ -52,28 +55,107 @@ router.put('/profile', async (req, res) => {
       ...updateData
     };
 
-    // Update and fetch the user with populated data
+    // Update the user
     const updatedUser = await User.findByIdAndUpdate(
       req.user._id,
       updateData,
       { new: true }
-    )
-    .populate({
-      path: 'participations',
-      populate: [
-        {
-          path: 'tournament',
-          select: 'name date location status format sportType'
-        },
-        {
-          path: 'matches',
-          select: 'matchDate status score round'
-        }
-      ]
-    })
-    .lean();
+    ).lean();
+
+    // Fetch all participations for this user (not just from user.participations array)
+    const allParticipations = await Participant.find({ user: req.user._id })
+      .populate({
+        path: 'tournament',
+        select: 'name date startDate location status format sportType'
+      })
+      .populate({
+        path: 'matches',
+        select: 'matchDate status score round'
+      })
+      .lean();
+    
+    // Attach all participations to user object
+    updatedUser.participations = allParticipations;
 
     console.log("User after database update:", updatedUser);
+
+    // Helper function to determine tournament type
+    const getTournamentType = (tournament) => {
+      if (!tournament) return null;
+      // Check format.type first
+      if (tournament.format && tournament.format.type) {
+        return tournament.format.type;
+      }
+      // Fallback: check if it's a team tournament by playersPerTeam
+      if (tournament.format && tournament.format.playersPerTeam && tournament.format.playersPerTeam > 1) {
+        return 'team';
+      }
+      // Default to individual
+      return 'individual';
+    };
+    
+    // Group participations by tournament type
+    const singleTournaments = allParticipations.filter(p => {
+      if (!p || !p.tournament) return false;
+      const type = getTournamentType(p.tournament);
+      return type === 'individual' || type === 'single';
+    });
+    
+    const teamTournaments = allParticipations.filter(p => {
+      if (!p || !p.tournament) return false;
+      const type = getTournamentType(p.tournament);
+      return type === 'team';
+    });
+
+    // Calculate statistics from actual Match records
+    const tournamentIds = allParticipations.map(p => p.tournament?._id || p.tournament).filter(Boolean);
+    const participationIds = allParticipations.map(p => p._id);
+    const userIdStr = req.user._id.toString();
+    
+    // Get all matches in tournaments where user participated
+    const allMatches = await Match.find({
+      tournament: { $in: tournamentIds }
+    }).lean();
+
+    // Count matches where user participated
+    let totalMatchesPlayed = 0;
+    let totalWins = 0;
+
+    for (const match of allMatches) {
+      let userInMatch = false;
+      
+      if (match.matchType === 'individual') {
+        // Check if user's participation is in match participants
+        if (match.participants && Array.isArray(match.participants)) {
+          userInMatch = match.participants.some(pid => 
+            participationIds.some(partId => partId.toString() === pid.toString())
+          );
+          
+          // Check if user won
+          if (userInMatch && match.status === 'completed' && match.winner && match.winnerModel === 'User') {
+            if (match.winner.toString() === userIdStr) {
+              totalWins++;
+            }
+          }
+        }
+      } else if (match.matchType === 'team') {
+        // For team matches, we need to check if user's team is in the match
+        // This requires populating teams, so we'll use a simpler approach
+        // Count from Participant records for team matches
+      }
+      
+      if (userInMatch && match.status !== 'cancelled') {
+        totalMatchesPlayed++;
+      }
+    }
+
+    // Also count from Participant records (more reliable for team matches)
+    const participantMatches = allParticipations.reduce((acc, p) => acc + (p?.matchesPlayed || 0), 0);
+    const participantWins = allParticipations.reduce((acc, p) => acc + (p?.matchesWon || 0), 0);
+    
+    // Use the higher value (in case one source has more complete data)
+    const finalTotalMatches = Math.max(totalMatchesPlayed, participantMatches);
+    const finalTotalWins = Math.max(totalWins, participantWins);
 
     // Format the user data consistently with login/success
     const formattedUser = {
@@ -83,17 +165,13 @@ router.put('/profile', async (req, res) => {
       
       // Group participations by tournament type with safety checks
       participationSummary: {
-        singleTournaments: (updatedUser.participations || [])
-          .filter(p => p && p.tournament && p.tournament.format && p.tournament.format.type === 'single'),
-        teamTournaments: (updatedUser.participations || [])
-          .filter(p => p && p.tournament && p.tournament.format && p.tournament.format.type === 'team'),
+        singleTournaments: singleTournaments,
+        teamTournaments: teamTournaments,
         stats: {
-          totalMatches: (updatedUser.participations || [])
-            .reduce((acc, p) => acc + (p ? (p.matchesPlayed || 0) : 0), 0),
-          totalWins: (updatedUser.participations || [])
-            .reduce((acc, p) => acc + (p ? (p.matchesWon || 0) : 0), 0),
-          activeTournaments: (updatedUser.participations || [])
-            .filter(p => p && p.status === 'active').length
+          totalMatches: finalTotalMatches,
+          totalWins: finalTotalWins,
+          activeTournaments: allParticipations.filter(p => p && p.status === 'active').length,
+          totalTournaments: allParticipations.length
         }
       }
     };
@@ -132,21 +210,23 @@ router.get('/login/success', async (req, res) => {
     }
 
     // Fetch user with all related data
-    const user = await User.findById(req.user._id)
+    // First, get all participations for this user (not just from user.participations array)
+    const allParticipations = await Participant.find({ user: req.user._id })
       .populate({
-        path: 'participations',
-        populate: [
-          {
-            path: 'tournament',
-            select: 'name date location status format sportType'
-          },
-          {
-            path: 'matches',
-            select: 'matchDate status score round'
-          }
-        ]
+        path: 'tournament',
+        select: 'name date startDate location status format sportType'
+      })
+      .populate({
+        path: 'matches',
+        select: 'matchDate status score round'
       })
       .lean();
+    
+    // Then get the user
+    const user = await User.findById(req.user._id).lean();
+    
+    // Attach all participations to user object
+    user.participations = allParticipations;
 
     if (!user) {
       return res.status(404).json({
@@ -156,6 +236,89 @@ router.get('/login/success', async (req, res) => {
     }
 
     // Format dates and handle participations
+    // Helper function to determine tournament type
+    const getTournamentType = (tournament) => {
+      if (!tournament) return null;
+      // Check format.type first
+      if (tournament.format && tournament.format.type) {
+        return tournament.format.type;
+      }
+      // Fallback: check if it's a team tournament by playersPerTeam
+      if (tournament.format && tournament.format.playersPerTeam && tournament.format.playersPerTeam > 1) {
+        return 'team';
+      }
+      // Default to individual
+      return 'individual';
+    };
+    
+    // Debug logging (can be removed later)
+    console.log(`[Auth] User ${user._id} has ${allParticipations.length} participations`);
+    
+    // Group participations by tournament type
+    const singleTournaments = allParticipations.filter(p => {
+      if (!p || !p.tournament) return false;
+      const type = getTournamentType(p.tournament);
+      return type === 'individual' || type === 'single';
+    });
+    
+    const teamTournaments = allParticipations.filter(p => {
+      if (!p || !p.tournament) return false;
+      const type = getTournamentType(p.tournament);
+      return type === 'team';
+    });
+
+    console.log(`[Auth] Found ${singleTournaments.length} individual and ${teamTournaments.length} team tournaments`);
+
+    // Calculate statistics from actual Match records
+    const tournamentIds = allParticipations.map(p => p.tournament?._id || p.tournament).filter(Boolean);
+    const participationIds = allParticipations.map(p => p._id);
+    const userIdStr = user._id.toString();
+    
+    // Get all matches in tournaments where user participated
+    const allMatches = await Match.find({
+      tournament: { $in: tournamentIds }
+    }).lean();
+
+    // Count matches where user participated
+    let totalMatchesPlayed = 0;
+    let totalWins = 0;
+
+    for (const match of allMatches) {
+      let userInMatch = false;
+      
+      if (match.matchType === 'individual') {
+        // Check if user's participation is in match participants
+        if (match.participants && Array.isArray(match.participants)) {
+          userInMatch = match.participants.some(pid => 
+            participationIds.some(partId => partId.toString() === pid.toString())
+          );
+          
+          // Check if user won
+          if (userInMatch && match.status === 'completed' && match.winner && match.winnerModel === 'User') {
+            if (match.winner.toString() === userIdStr) {
+              totalWins++;
+            }
+          }
+        }
+      } else if (match.matchType === 'team') {
+        // For team matches, we need to check if user's team is in the match
+        // This requires populating teams, so we'll use a simpler approach
+        // Count from Participant records for team matches
+      }
+      
+      if (userInMatch && match.status !== 'cancelled') {
+        totalMatchesPlayed++;
+      }
+    }
+
+    // Also count from Participant records (more reliable for team matches)
+    const participantMatches = allParticipations.reduce((acc, p) => acc + (p?.matchesPlayed || 0), 0);
+    const participantWins = allParticipations.reduce((acc, p) => acc + (p?.matchesWon || 0), 0);
+    
+    // Use the higher value (in case one source has more complete data)
+    const finalTotalMatches = Math.max(totalMatchesPlayed, participantMatches);
+    const finalTotalWins = Math.max(totalWins, participantWins);
+
     const formattedUser = {
       ...user,
       dob: user.dob ? new Date(user.dob).toISOString() : undefined,
@@ -163,17 +326,13 @@ router.get('/login/success', async (req, res) => {
       
       // Group participations by tournament type with safety checks
       participationSummary: {
-        singleTournaments: (user.participations || [])
-          .filter(p => p && p.tournament && p.tournament.format && p.tournament.format.type === 'single'),
-        teamTournaments: (user.participations || [])
-          .filter(p => p && p.tournament && p.tournament.format && p.tournament.format.type === 'team'),
+        singleTournaments: singleTournaments,
+        teamTournaments: teamTournaments,
         stats: {
-          totalMatches: (user.participations || [])
-            .reduce((acc, p) => acc + (p ? (p.matchesPlayed || 0) : 0), 0),
-          totalWins: (user.participations || [])
-            .reduce((acc, p) => acc + (p ? (p.matchesWon || 0) : 0), 0),
-          activeTournaments: (user.participations || [])
-            .filter(p => p && p.status === 'active').length
+          totalMatches: finalTotalMatches,
+          totalWins: finalTotalWins,
+          activeTournaments: allParticipations.filter(p => p && p.status === 'active').length,
+          totalTournaments: allParticipations.length
         }
       }
     };

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import './Dashboard.css';
 import defaultPic from './defaultProfilePic.png';
@@ -124,61 +124,123 @@ const Dashboard = () => {
       .catch(err => console.error('Error fetching sports data:', err));
   }, []);
 
-  // Fetch available tournaments for participation
+  // Ref to track if we're currently refreshing to prevent infinite loops
+  const isRefreshingRef = useRef(false);
+
+  // Main effect: Refresh data when component mounts or user changes
   useEffect(() => {
-    if (user && user.role === 'participant') {
-      fetchAvailableTournaments();
-      fetchParticipatedTournaments();
-    }
+    if (!user || isRefreshingRef.current) return;
+    
+    isRefreshingRef.current = true;
+    const refreshData = async () => {
+      try {
+        await checkAuthStatus();
+        if (user?.role === 'participant') {
+          await fetchAvailableTournaments();
+          await fetchParticipatedTournaments();
+        }
+      } finally {
+        isRefreshingRef.current = false;
+      }
+    };
+    
+    refreshData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
+
+  // Refresh data when refreshTrigger changes (from other components)
+  useEffect(() => {
+    if (!user || refreshTrigger === 0 || isRefreshingRef.current) return;
+    
+    isRefreshingRef.current = true;
+    const refreshData = async () => {
+      try {
+        await checkAuthStatus();
+        if (user.role === 'participant') {
+          await fetchAvailableTournaments();
+          await fetchParticipatedTournaments();
+        }
+      } finally {
+        isRefreshingRef.current = false;
+      }
+    };
+    
+    refreshData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTrigger]); // Only depend on refreshTrigger
+
+  // Refresh data when navigating to dashboard
+  useEffect(() => {
+    if (!user || location.pathname !== '/dashboard' || isRefreshingRef.current) return;
+    
+    isRefreshingRef.current = true;
+    const refreshData = async () => {
+      try {
+        await checkAuthStatus();
+        if (user.role === 'participant') {
+          await fetchAvailableTournaments();
+          await fetchParticipatedTournaments();
+        }
+      } finally {
+        isRefreshingRef.current = false;
+      }
+    };
+    
+    refreshData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]); // Only depend on pathname
+
+  // Handle visibility and focus changes (using refs to avoid dependency issues)
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
   }, [user]);
 
-  // Refresh data when refreshTrigger changes
-  useEffect(() => {
-    if (user && user.role === 'participant' && refreshTrigger > 0) {
-      fetchAvailableTournaments();
-      fetchParticipatedTournaments();
-    }
-  }, [refreshTrigger, user]);
-
-  // Refresh data when user navigates to dashboard
-  useEffect(() => {
-    if (user && user.role === 'participant' && location.pathname === '/dashboard') {
-      fetchAvailableTournaments();
-      fetchParticipatedTournaments();
-    }
-  }, [location.pathname, user]);
-
-  // Refresh data when component becomes visible (user navigates to dashboard)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (!document.hidden && user && user.role === 'participant') {
-        fetchAvailableTournaments();
-        fetchParticipatedTournaments();
+      if (!document.hidden && userRef.current && !isRefreshingRef.current) {
+        isRefreshingRef.current = true;
+        const refreshData = async () => {
+          try {
+            await checkAuthStatus();
+            if (userRef.current?.role === 'participant') {
+              await fetchAvailableTournaments();
+              await fetchParticipatedTournaments();
+            }
+          } finally {
+            isRefreshingRef.current = false;
+          }
+        };
+        refreshData();
       }
     };
 
     const handleFocus = () => {
-      if (user && user.role === 'participant') {
-        fetchAvailableTournaments();
-        fetchParticipatedTournaments();
+      if (userRef.current && !isRefreshingRef.current) {
+        isRefreshingRef.current = true;
+        const refreshData = async () => {
+          try {
+            await checkAuthStatus();
+            if (userRef.current?.role === 'participant') {
+              await fetchAvailableTournaments();
+              await fetchParticipatedTournaments();
+            }
+          } finally {
+            isRefreshingRef.current = false;
+          }
+        };
+        refreshData();
       }
     };
 
-    // Listen for visibility changes and window focus
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
-
-    // Also refresh when component mounts (in case user navigated from another page)
-    if (user && user.role === 'participant') {
-      fetchAvailableTournaments();
-      fetchParticipatedTournaments();
-    }
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [user]);
+  }, []); // Only set up listeners once
 
   const fetchAvailableTournaments = async () => {
     try {
@@ -385,7 +447,31 @@ const Dashboard = () => {
         
         {/* Tournament Statistics */}
         <section className="stats-section">
-          <h2>Your Tournament Statistics</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2>Your Tournament Statistics</h2>
+            <button 
+              className="refresh-stats-button"
+              onClick={async () => {
+                console.log('Refreshing user data...');
+                console.log('User before refresh:', user);
+                await checkAuthStatus();
+                // Force a re-render by checking auth status again after a brief delay
+                setTimeout(async () => {
+                  await checkAuthStatus();
+                  console.log('User data after refresh:', user);
+                  console.log('Participation Summary:', user?.participationSummary);
+                  console.log('Stats:', user?.participationSummary?.stats);
+                }, 100);
+                if (user?.role === 'participant') {
+                  await fetchAvailableTournaments();
+                  await fetchParticipatedTournaments();
+                }
+              }}
+              title="Refresh statistics"
+            >
+              🔄 Refresh
+            </button>
+          </div>
           {user?.participationSummary?.stats ? (
             <div className="stats-grid">
               <div className="stat-card">
@@ -408,6 +494,10 @@ const Dashboard = () => {
                 <h3>Active Tournaments</h3>
                 <p>{user.participationSummary.stats.activeTournaments || 0}</p>
               </div>
+              <div className="stat-card">
+                <h3>Total Tournaments</h3>
+                <p>{user.participationSummary.stats.totalTournaments || 0}</p>
+              </div>
             </div>
           ) : (
             <p>No tournament statistics available</p>
@@ -416,6 +506,19 @@ const Dashboard = () => {
 
         {/* Individual Tournaments */}
         <section className="tournaments-section">
+          {/* Debug info - remove after testing */}
+          {process.env.NODE_ENV === 'development' && (
+            // <div style={{ padding: '0.5rem', background: '#f0f0f0', fontSize: '0.8rem', marginBottom: '1rem' }}>
+            //   Debug: singleTournaments count = {user?.participationSummary?.singleTournaments?.length || 0}
+            //   <br />
+            //   All participations: {JSON.stringify(user?.participationSummary?.singleTournaments?.map(p => ({
+            //     name: p?.tournament?.name,
+            //     status: p?.status,
+            //     format: p?.tournament?.format?.type
+            //   })))}
+            // </div>
+            <></>
+          )}
 
           <div className='individualTournament'>
             <div

@@ -10,10 +10,15 @@ const Home = () => {
     latest: [],
     ongoing: []
   });
+  const [allTournaments, setAllTournaments] = useState([]);
+  const [showAllTournaments, setShowAllTournaments] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [allTournamentsLoading, setAllTournamentsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [participationStatus, setParticipationStatus] = useState({});
   const [actionLoading, setActionLoading] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('date-desc');
 
   // Function to check participation status for a tournament
   const checkParticipationStatus = async (tournamentId) => {
@@ -133,9 +138,45 @@ const Home = () => {
     }
   };
 
+  // Function to fetch all tournaments
+  const fetchAllTournaments = async () => {
+    try {
+      setAllTournamentsLoading(true);
+      setError(null);
+      
+      const data = await api.get('/tournaments');
+      const allTournamentsList = data.success ? data.tournaments : [];
+      
+      setAllTournaments(allTournamentsList);
+      setShowAllTournaments(true);
+
+      // Check participation status for all tournaments
+      if (user) {
+        allTournamentsList.forEach(tournament => {
+          checkParticipationStatus(tournament._id);
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching all tournaments:', error);
+      setError('Failed to load tournaments. Please try again later.');
+    } finally {
+      setAllTournamentsLoading(false);
+    }
+  };
+
+  // Function to handle view all button click
+  const handleViewAll = () => {
+    if (!showAllTournaments) {
+      fetchAllTournaments();
+    } else {
+      setShowAllTournaments(false);
+    }
+  };
+
   useEffect(() => {
     fetchTournaments();
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only fetch on mount, user check is inside fetchTournaments
 
   const TournamentCard = ({ tournament }) => {
     const canEdit = user && 
@@ -213,6 +254,65 @@ const Home = () => {
     );
   };
 
+  // Format date for display
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  };
+
+  // Filter and sort tournaments
+  const getFilteredAndSortedTournaments = () => {
+    let filtered = [...allTournaments];
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(tournament => 
+        tournament.name.toLowerCase().includes(query) ||
+        tournament.sportType?.toLowerCase().includes(query) ||
+        tournament.location?.toLowerCase().includes(query) ||
+        tournament.status?.toLowerCase().includes(query)
+      );
+    }
+
+    // Apply sorting
+    filtered.sort((a, b) => {
+      switch (sortBy) {
+        case 'name-asc':
+          return (a.name || '').localeCompare(b.name || '');
+        case 'name-desc':
+          return (b.name || '').localeCompare(a.name || '');
+        case 'date-asc':
+          const dateA = new Date(a.startDate || a.date || 0);
+          const dateB = new Date(b.startDate || b.date || 0);
+          return dateA - dateB;
+        case 'date-desc':
+          const dateA2 = new Date(a.startDate || a.date || 0);
+          const dateB2 = new Date(b.startDate || b.date || 0);
+          return dateB2 - dateA2;
+        case 'participants-asc':
+          return (a.currentParticipants || 0) - (b.currentParticipants || 0);
+        case 'participants-desc':
+          return (b.currentParticipants || 0) - (a.currentParticipants || 0);
+        case 'status-asc':
+          return (a.status || '').localeCompare(b.status || '');
+        case 'status-desc':
+          return (b.status || '').localeCompare(a.status || '');
+        default:
+          return 0;
+      }
+    });
+
+    return filtered;
+  };
+
+  const filteredAndSortedTournaments = getFilteredAndSortedTournaments();
+
   return (
     <div className="home-container">
       <header className="hero-section">
@@ -224,6 +324,112 @@ const Home = () => {
         <div className="error-message">
           {error}
         </div>
+      ) : showAllTournaments ? (
+        <section className="all-tournaments-section">
+          <div className="section-header">
+            <h2>All Tournaments</h2>
+            <button className="view-all-button" onClick={handleViewAll}>
+              Back to Home
+            </button>
+          </div>
+          
+          {/* Search and Sort Controls */}
+          <div className="search-sort-controls">
+            <div className="search-container">
+              <input
+                type="text"
+                placeholder="Search tournaments by name, sport, location, or status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="search-input"
+              />
+              {searchQuery && (
+                <button 
+                  className="clear-search-button"
+                  onClick={() => setSearchQuery('')}
+                  title="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            <div className="sort-container">
+              <label htmlFor="sort-select" className="sort-label">Sort by:</label>
+              <select
+                id="sort-select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="sort-select"
+              >
+                <option value="date-desc">Date (Newest First)</option>
+                <option value="date-asc">Date (Oldest First)</option>
+                <option value="name-asc">Name (A-Z)</option>
+                <option value="name-desc">Name (Z-A)</option>
+                <option value="participants-desc">Participants (High to Low)</option>
+                <option value="participants-asc">Participants (Low to High)</option>
+                <option value="status-asc">Status (A-Z)</option>
+                <option value="status-desc">Status (Z-A)</option>
+              </select>
+            </div>
+          </div>
+
+          {allTournamentsLoading ? (
+            <div className="loading-message">Loading all tournaments...</div>
+          ) : (
+            <>
+              {searchQuery && (
+                <div className="search-results-info">
+                  Showing {filteredAndSortedTournaments.length} of {allTournaments.length} tournaments
+                </div>
+              )}
+              <div className="tournaments-table-container">
+                <table className="tournaments-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Date</th>
+                      <th>Participants</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAndSortedTournaments && filteredAndSortedTournaments.length > 0 ? (
+                      filteredAndSortedTournaments.map((tournament) => (
+                        <tr key={tournament._id}>
+                          <td className="tournament-name">{tournament.name}</td>
+                          <td>{formatDate(tournament.startDate || tournament.date)}</td>
+                          <td>
+                            {tournament.currentParticipants || 0} / {tournament.participantsLimit}
+                          </td>
+                          <td>
+                            <span className={`status-badge ${tournament.status?.toLowerCase() || 'upcoming'}`}>
+                              {tournament.status || 'Upcoming'}
+                            </span>
+                          </td>
+                          <td>
+                            <Link 
+                              to={`/tournament/${tournament._id}`} 
+                              className="view-details-button"
+                            >
+                              View Details
+                            </Link>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="5" className="no-tournaments-cell">
+                          {searchQuery ? 'No tournaments found matching your search' : 'No tournaments available'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </section>
       ) : loading ? (
         <div className="loading-message">
           Loading tournaments...
@@ -233,7 +439,9 @@ const Home = () => {
           <section className="featured-section">
             <div className="section-header">
               <h2>Latest Tournaments</h2>
-              <button className="view-all-button">View All</button>
+              <button className="view-all-button" onClick={handleViewAll}>
+                View All
+              </button>
             </div>
             <div className="tournaments-grid">
               {tournaments.latest && tournaments.latest.length > 0 ? (
@@ -249,7 +457,9 @@ const Home = () => {
           <section className="featured-section">
             <div className="section-header">
               <h2>Ongoing Tournaments</h2>
-              <button className="view-all-button">View All</button>
+              <button className="view-all-button" onClick={handleViewAll}>
+                View All
+              </button>
             </div>
             <div className="tournaments-grid">
               {tournaments.ongoing && tournaments.ongoing.length > 0 ? (

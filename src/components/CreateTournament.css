@@ -2,6 +2,7 @@
   max-width: 1200px;
   margin: 2rem auto;
   padding: 0 2rem;
+  width: 800px;
 }
 
 .create-tournament-container h1 {
@@ -60,6 +61,30 @@
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.form-group input.input-error {
+  border-color: #ef4444;
+}
+
+.form-group input.input-error:focus {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}
+
+.error-message {
+  color: #ef4444;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  display: block;
+}
+
+.checking-name {
+  color: #64748b;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  display: block;
+  font-style: italic;
 }
 
 .form-group textarea {

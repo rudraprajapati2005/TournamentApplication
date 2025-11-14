@@ -63,7 +63,7 @@ const EditProfile = ({ user, onSave }) => {
       <h2 style={{ textAlign: 'center', marginBottom: 24, color: '#1976d2' }}>Edit Profile</h2>
       <div style={{ marginBottom: 18, textAlign: 'center' }}>
         <img
-          src={form.profilePic || 'https://via.placeholder.com/100'}
+          src={form.profilePic || '/static/media/defaultProfilePic.10691648d79aa2f92514.png'}
           alt="Profile"
           style={{ width: 100, height: 100, borderRadius: '50%', objectFit: 'cover', marginBottom: 8 }}
         />

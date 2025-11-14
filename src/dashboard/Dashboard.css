@@ -169,6 +169,22 @@ body {
   color: #0ea5e9;
 }
 
+.refresh-stats-button {
+  padding: 0.5rem 1rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.refresh-stats-button:hover {
+  background: #2563eb;
+}
+
 /* Tournament Sections */
 .tournaments-section {
   margin-bottom: 2rem;
@@ -393,6 +409,8 @@ body {
   border-radius: 999px;
   font-size: 0.875rem;
   font-weight: 500;
+  z-index: 100;
+  position: relative;
 }
 
 .status-badge.upcoming {

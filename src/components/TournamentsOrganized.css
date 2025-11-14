@@ -197,7 +197,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
+  width: fit-content;
   height: 40px;
 }
 
@@ -231,9 +231,10 @@
   border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   border: 1px solid #e5e7eb;
-  overflow: hidden;
+  overflow: visible;
   transition: all 0.2s ease;
   position: relative;
+  z-index: 1;
 }
 
 .tournament-card::before {
@@ -308,6 +309,9 @@
 }
 
 .status-badge {
+  
+  z-index: 100;
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.25rem;
@@ -732,3 +736,196 @@
 .tournament-card:nth-child(4) { animation-delay: 0.4s; }
 .tournament-card:nth-child(5) { animation-delay: 0.5s; }
 .tournament-card:nth-child(6) { animation-delay: 0.6s; }
+
+/* Your Team Section - Matching TournamentDetails styling */
+.organizing-team-view {
+  padding-top: 0.5rem;
+  background: white;
+  border-radius: 12px;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.otv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.otv-header > div:first-child {
+  flex: 1;
+  min-width: 200px;
+}
+
+.otv-title {
+  font-weight: 700;
+  color: #111827;
+  font-size: 1.125rem;
+  margin-bottom: 0.25rem;
+}
+
+.otv-sub {
+  color: #6b7280;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.otv-add {
+  
+  flex-shrink: 0;
+}
+
+.ot-row {
+  display: flex;
+  gap: 8px;
+  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: left;
+}
+
+.ot-input {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  min-width: 200px;
+  flex: 1;
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+}
+
+.ot-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.op-btn {
+  background: linear-gradient(135deg, #1f2937, #111827);
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.op-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.op-btn.primary {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+}
+
+.op-btn.primary:hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.op-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.otv-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+  margin-top: 0.5rem;
+}
+
+.otv-member {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  transition: all 0.2s ease;
+}
+
+.otv-member:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.otv-member-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.otv-member-name {
+  font-weight: 600;
+  color: #111827;
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.otv-member-email {
+  font-size: 0.8rem;
+  color: #6b7280;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
+.otv-member-role {
+  font-size: 0.75rem;
+  color: #4b5563;
+  text-transform: capitalize;
+  margin-top: 2px;
+}
+
+.otv-empty {
+  color: #6b7280;
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+/* Responsive adjustments for Your Team section */
+@media (max-width: 768px) {
+  .otv-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .otv-add {
+    width: 100%;
+
+  }
+
+  .ot-row {
+    flex-direction: column;
+  }
+
+  .ot-input {
+    width: 100%;
+    min-width: unset;
+  }
+
+  .op-btn {
+    width: 100%;
+  }
+
+  .otv-members {
+    grid-template-columns: 1fr;
+  }
+}

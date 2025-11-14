@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../utils/api.js';
 import sportsData from '../data/allSports.json';
 import './CreateTournament.css';
 
@@ -24,6 +25,51 @@ const CreateTournament = () => {
     },
     eliminationType: 'single'
   });
+  const [nameError, setNameError] = useState('');
+  const [checkingName, setCheckingName] = useState(false);
+
+  // Check if tournament name exists
+  const checkTournamentName = async (tournamentName) => {
+    if (!tournamentName || tournamentName.trim() === '') {
+      setNameError('');
+      return;
+    }
+
+    setCheckingName(true);
+    try {
+      const data = await api.get('/tournaments');
+      if (data.success && data.tournaments) {
+        const nameExists = data.tournaments.some(
+          tournament => tournament.name.toLowerCase().trim() === tournamentName.toLowerCase().trim()
+        );
+        if (nameExists) {
+          setNameError('That tournament with name already exists');
+        } else {
+          setNameError('');
+        }
+      }
+    } catch (error) {
+      console.error('Error checking tournament name:', error);
+      // Don't show error if API call fails, just allow submission
+      setNameError('');
+    } finally {
+      setCheckingName(false);
+    }
+  };
+
+  // Debounce function for name checking
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (formData.name) {
+        checkTournamentName(formData.name);
+      } else {
+        setNameError('');
+      }
+    }, 500); // Wait 500ms after user stops typing
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.name]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -60,10 +106,40 @@ const CreateTournament = () => {
         [name]: value
       }));
     }
+
+    // Clear name error when user starts typing again
+    if (name === 'name') {
+      setNameError('');
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Check name again before submission
+    if (formData.name) {
+      try {
+        const data = await api.get('/tournaments');
+        if (data.success && data.tournaments) {
+          const nameExists = data.tournaments.some(
+            tournament => tournament.name.toLowerCase().trim() === formData.name.toLowerCase().trim()
+          );
+          if (nameExists) {
+            setNameError('That tournament with name already exists');
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error checking tournament name:', error);
+        // Continue with submission if check fails
+      }
+    }
+
+    // Prevent submission if name error exists
+    if (nameError) {
+      return;
+    }
+
     try {
       const response = await fetch('http://localhost:8080/tournaments/create', {
         method: 'POST',
@@ -82,7 +158,12 @@ const CreateTournament = () => {
         alert('Tournament created successfully!');
         navigate('/dashboard');
       } else {
-        alert(data.message || 'Failed to create tournament');
+        // Check if error is due to duplicate name
+        if (data.message && data.message.toLowerCase().includes('name')) {
+          setNameError('That tournament with name already exists');
+        } else {
+          alert(data.message || 'Failed to create tournament');
+        }
       }
     } catch (error) {
       console.error('Error creating tournament:', error);
@@ -103,8 +184,16 @@ const CreateTournament = () => {
               name="name"
               value={formData.name}
               onChange={handleChange}
+              onBlur={() => checkTournamentName(formData.name)}
               required
+              className={nameError ? 'input-error' : ''}
             />
+            {checkingName && (
+              <div className="checking-name">Checking name...</div>
+            )}
+            {nameError && (
+              <div className="error-message">{nameError}</div>
+            )}
           </div>
 
           <div className="form-group">
