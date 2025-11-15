@@ -305,7 +305,7 @@ const Dashboard = () => {
       }
     } catch (error) {
       console.error('Error joining tournament:', error);
-      alert('Failed to join tournament. Please try again.');
+      alert(error.message || 'Failed to join tournament. Please try again.');
     } finally {
       setParticipationLoading(prev => ({ ...prev, [tournamentId]: false }));
     }

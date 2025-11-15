@@ -3,6 +3,7 @@ import Tournament from '../models/Tournament.model.js';
 import Score from '../models/Score.model.js';
 import Participant from '../models/Participant.model.js';
 import User from '../models/User.model.js';
+import Team from '../models/Team.model.js';
 import { isAuthenticated, isOrganizer } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
@@ -133,6 +134,11 @@ router.get('/:id', async (req, res) => {
             .populate({
                 path: 'participants',
                 populate: { path: 'user', select: 'name email' }
+            })
+            .populate({
+                path: 'teams',
+                select: 'name isOrganizing',
+                populate: { path: 'leader', select: 'name email' }
             })
             .populate({
                 path: 'matches',
@@ -333,11 +339,136 @@ router.post('/:id/join', isAuthenticated, async (req, res) => {
             });
         }
 
-        // Disallow individual join for team-based tournaments
+        // Handle team-based tournaments
         if (tournament.format?.type === 'team') {
-            return res.status(400).json({
-                success: false,
-                message: 'This is a team-based tournament. Please create or join a team.'
+            // Check if user has a team for this tournament
+            const userTeam = await Team.findOne({
+                tournament: tournamentId,
+                isOrganizing: false,
+                $or: [
+                    { leader: userId },
+                    { 'members.user': userId }
+                ]
+            }).populate('members.user', 'name email');
+
+            if (!userTeam) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'This is a team-based tournament. Please create or join a team.'
+                });
+            }
+
+            // Check if team has enough members
+            const requiredPlayers = tournament.format?.playersPerTeam || 0;
+            if (requiredPlayers > 0) {
+                // Count unique team members (leader may or may not be in members array)
+                const memberIds = new Set();
+                memberIds.add(userTeam.leader.toString());
+                if (userTeam.members && userTeam.members.length > 0) {
+                    userTeam.members.forEach(m => {
+                        const memberId = (m.user?._id || m.user)?.toString();
+                        if (memberId) {
+                            memberIds.add(memberId);
+                        }
+                    });
+                }
+                const teamMemberCount = memberIds.size;
+                
+                if (teamMemberCount < requiredPlayers) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'No. of teams members are not enough'
+                    });
+                }
+            }
+
+            // Check if team is already registered
+            if (userTeam.isRegistered) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Your team is already registered for this tournament'
+                });
+            }
+
+            // Check if tournament is still accepting registrations
+            if (tournament.status !== 'upcoming') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Tournament is not accepting new participants'
+                });
+            }
+
+            // Check if registration deadline has passed
+            if (new Date() > new Date(tournament.registrationDeadline)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Registration deadline has passed'
+                });
+            }
+
+            // Check if tournament is full
+            if (tournament.currentParticipants >= tournament.participantsLimit) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Tournament is full'
+                });
+            }
+
+            // Register the team for the tournament
+            userTeam.isRegistered = true;
+            await userTeam.save();
+
+            // Update tournament participant count (teams count as 1 participant)
+            tournament.currentParticipants += 1;
+            await tournament.save();
+
+            // Create participation records for all team members
+            const allTeamMembers = [userTeam.leader, ...(userTeam.members || []).map(m => m.user)];
+            const participationPromises = [];
+            
+            for (const memberId of allTeamMembers) {
+                // Check if member already has a participation record
+                const existingParticipation = await Participant.findOne({
+                    user: memberId,
+                    tournament: tournamentId
+                });
+
+                if (!existingParticipation) {
+                    const participation = new Participant({
+                        user: memberId,
+                        tournament: tournamentId,
+                        status: 'registered'
+                    });
+                    participationPromises.push(participation.save());
+                    tournament.participants.push(participation._id);
+                }
+            }
+
+            await Promise.all(participationPromises);
+            await tournament.save();
+
+            // Update all team members' participations
+            for (const memberId of allTeamMembers) {
+                const member = await User.findById(memberId);
+                if (member) {
+                    const memberParticipation = await Participant.findOne({
+                        user: memberId,
+                        tournament: tournamentId
+                    });
+                    if (memberParticipation && !member.participations.includes(memberParticipation._id)) {
+                        member.participations.push(memberParticipation._id);
+                    }
+                    if (!member.participatedTournaments.includes(tournamentId)) {
+                        member.participatedTournaments.push(tournamentId);
+                    }
+                    await member.save();
+                }
+            }
+
+            return res.json({
+                success: true,
+                message: 'Successfully joined tournament with your team',
+                team: userTeam
             });
         }
 

@@ -31,6 +31,118 @@ router.post('/schedule', isAuthenticated, isOrganizer, async (req, res) => {
     }
 });
 
+// Create custom match (for organizers and organizing team members)
+router.post('/create-custom', isAuthenticated, async (req, res) => {
+    try {
+        const { tournamentId, round, matchType, participantIds, teamIds, scheduledAt, durationMinutes, location, description } = req.body;
+        
+        const tournament = await Tournament.findById(tournamentId);
+        if (!tournament) return res.status(404).json({ success: false, message: 'Tournament not found' });
+
+        // Check authorization: organizer or organizing team member
+        const isOrganizer = tournament.organizer.toString() === req.user._id.toString();
+        let isOrganizingMember = false;
+        
+        if (!isOrganizer) {
+            const organizingTeam = await Team.findOne({ 
+                tournament: tournamentId, 
+                isOrganizing: true 
+            });
+            
+            if (organizingTeam) {
+                if (organizingTeam.leader?.toString() === req.user._id.toString()) {
+                    isOrganizingMember = true;
+                } else if (organizingTeam.members?.some(m => m.user?.toString() === req.user._id.toString())) {
+                    isOrganizingMember = true;
+                }
+            }
+        }
+
+        if (!isOrganizer && !isOrganizingMember) {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Only tournament organizers or organizing team members can create matches' 
+            });
+        }
+
+        // Validate match type and participants
+        if (!matchType || !['individual', 'team'].includes(matchType)) {
+            return res.status(400).json({ success: false, message: 'Invalid match type' });
+        }
+
+        if (!round || round < 1) {
+            return res.status(400).json({ success: false, message: 'Round number is required and must be at least 1' });
+        }
+
+        const matchDoc = {
+            tournament: tournamentId,
+            round: parseInt(round),
+            matchType,
+            status: 'upcoming',
+            maxParticipants: 2,
+            currentParticipants: 0
+        };
+
+        if (matchType === 'team') {
+            if (!teamIds || !Array.isArray(teamIds) || teamIds.length < 2) {
+                return res.status(400).json({ success: false, message: 'At least 2 teams are required for a team match' });
+            }
+            if (teamIds.length > 2) {
+                return res.status(400).json({ success: false, message: 'Maximum 2 teams allowed per match' });
+            }
+            // Verify teams belong to this tournament
+            const teams = await Team.find({ _id: { $in: teamIds }, tournament: tournamentId, isOrganizing: false });
+            if (teams.length !== teamIds.length) {
+                return res.status(400).json({ success: false, message: 'One or more teams not found or invalid for this tournament' });
+            }
+            matchDoc.teams = teamIds;
+            matchDoc.currentParticipants = teamIds.length;
+        } else {
+            if (!participantIds || !Array.isArray(participantIds) || participantIds.length < 2) {
+                return res.status(400).json({ success: false, message: 'At least 2 participants are required for an individual match' });
+            }
+            if (participantIds.length > 2) {
+                return res.status(400).json({ success: false, message: 'Maximum 2 participants allowed per match' });
+            }
+            // Verify participants belong to this tournament
+            const participants = await Participant.find({ _id: { $in: participantIds }, tournament: tournamentId });
+            if (participants.length !== participantIds.length) {
+                return res.status(400).json({ success: false, message: 'One or more participants not found or invalid for this tournament' });
+            }
+            matchDoc.participants = participantIds;
+            matchDoc.currentParticipants = participantIds.length;
+        }
+
+        if (scheduledAt) {
+            matchDoc.scheduledAt = new Date(scheduledAt);
+        }
+        if (durationMinutes) {
+            matchDoc.durationMinutes = parseInt(durationMinutes);
+        }
+        if (location) {
+            matchDoc.location = location;
+        }
+        if (description) {
+            matchDoc.description = description;
+        }
+
+        const match = await Match.create(matchDoc);
+        await Tournament.findByIdAndUpdate(tournamentId, { $addToSet: { matches: match._id } });
+        
+        // Populate the match before returning
+        const populatedMatch = await Match.findById(match._id)
+            .populate('participants', 'user')
+            .populate({ path: 'participants', populate: { path: 'user', select: 'name email' } })
+            .populate('teams', 'name')
+            .populate({ path: 'teams', populate: { path: 'members.user', select: 'name email' } });
+
+        return res.status(201).json({ success: true, match: populatedMatch });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ success: false, message: 'Failed to create match', error: err.message });
+    }
+});
+
 // Auto-schedule Round 1 based on current entries (participants or teams)
 router.post('/auto-schedule/:tournamentId', isAuthenticated, isOrganizer, async (req, res) => {
     try {
@@ -111,6 +223,75 @@ router.post('/:matchId/start', isAuthenticated, isOrganizer, async (req, res) =>
     }
 });
 
+// Update match status (for organizers and organizing team members)
+router.put('/:matchId/status', isAuthenticated, async (req, res) => {
+    try {
+        const { matchId } = req.params;
+        const { status } = req.body;
+
+        if (!status || !['upcoming', 'started', 'completed', 'cancelled'].includes(status)) {
+            return res.status(400).json({ success: false, message: 'Invalid status. Must be one of: upcoming, started, completed, cancelled' });
+        }
+
+        const match = await Match.findById(matchId).populate('tournament');
+        if (!match) return res.status(404).json({ success: false, message: 'Match not found' });
+
+        // Check authorization: organizer or organizing team member
+        const tournament = match.tournament;
+        const isOrganizer = tournament.organizer.toString() === req.user._id.toString();
+        let isOrganizingMember = false;
+        
+        if (!isOrganizer) {
+            const organizingTeam = await Team.findOne({ 
+                tournament: tournament._id, 
+                isOrganizing: true 
+            });
+            
+            if (organizingTeam) {
+                if (organizingTeam.leader?.toString() === req.user._id.toString()) {
+                    isOrganizingMember = true;
+                } else if (organizingTeam.members?.some(m => m.user?.toString() === req.user._id.toString())) {
+                    isOrganizingMember = true;
+                }
+            }
+        }
+
+        if (!isOrganizer && !isOrganizingMember) {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Only tournament organizers or organizing team members can update match status' 
+            });
+        }
+
+        // Update status and timestamps
+        const updateData = { status };
+        if (status === 'started' && match.status !== 'started') {
+            updateData.startedAt = new Date();
+        }
+        if (status === 'completed' && match.status !== 'completed') {
+            updateData.endedAt = new Date();
+        }
+        if (status === 'cancelled' && match.status !== 'cancelled') {
+            updateData.endedAt = new Date();
+        }
+
+        const updatedMatch = await Match.findByIdAndUpdate(
+            matchId, 
+            updateData, 
+            { new: true }
+        )
+        .populate('participants', 'user')
+        .populate({ path: 'participants', populate: { path: 'user', select: 'name email' } })
+        .populate('teams', 'name')
+        .populate({ path: 'teams', populate: { path: 'members.user', select: 'name email' } });
+
+        return res.json({ success: true, match: updatedMatch });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ success: false, message: 'Failed to update match status', error: err.message });
+    }
+});
+
 // Input score for a player (and optional team)
 router.post('/:matchId/score', isAuthenticated, async (req, res) => {
     try {
@@ -183,18 +364,61 @@ router.post('/:matchId/score', isAuthenticated, async (req, res) => {
 });
 
 // Auto declare winner (with manual override if tie)
-router.post('/:matchId/declare', isAuthenticated, isOrganizer, async (req, res) => {
+router.post('/:matchId/declare', isAuthenticated, async (req, res) => {
     try {
         const { matchId } = req.params;
         const { overrideWinnerId, overrideModel } = req.body; // Manual override
-        const match = await Match.findById(matchId).populate('teams').populate('participants');
+        const match = await Match.findById(matchId)
+            .populate('teams')
+            .populate('participants')
+            .populate('tournament');
         if (!match) return res.status(404).json({ success: false, message: 'Match not found' });
+
+        // Check authorization: organizer or organizing team member
+        const tournament = match.tournament;
+        const isOrganizer = tournament.organizer.toString() === req.user._id.toString();
+        let isOrganizingMember = false;
+        
+        if (!isOrganizer) {
+            const organizingTeam = await Team.findOne({ 
+                tournament: tournament._id, 
+                isOrganizing: true 
+            });
+            
+            if (organizingTeam) {
+                if (organizingTeam.leader?.toString() === req.user._id.toString()) {
+                    isOrganizingMember = true;
+                } else if (organizingTeam.members?.some(m => m.user?.toString() === req.user._id.toString())) {
+                    isOrganizingMember = true;
+                }
+            }
+        }
+
+        if (!isOrganizer && !isOrganizingMember) {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Only tournament organizers or organizing team members can declare winners' 
+            });
+        }
 
         let winnerId = null;
         let winnerModel = null;
 
         if (overrideWinnerId && overrideModel) {
-            winnerId = overrideWinnerId;
+            // If it's an individual match and we receive a participant ID, convert it to user ID
+            if (overrideModel === 'User' && match.matchType === 'individual') {
+                // Check if the ID is a participant ID or user ID
+                const participant = await Participant.findById(overrideWinnerId);
+                if (participant) {
+                    // It's a participant ID, get the user ID
+                    winnerId = participant.user;
+                } else {
+                    // Assume it's already a user ID
+                    winnerId = overrideWinnerId;
+                }
+            } else {
+                winnerId = overrideWinnerId;
+            }
             winnerModel = overrideModel; // 'User' | 'Team'
         } else {
             if (match.matchType === 'team') {
@@ -232,7 +456,16 @@ router.post('/:matchId/declare', isAuthenticated, isOrganizer, async (req, res) 
         match.status = 'completed';
         match.endedAt = new Date();
         await match.save();
-        return res.json({ success: true, match });
+        
+        // Populate the match with all necessary data including winner
+        const populatedMatch = await Match.findById(matchId)
+            .populate('participants', 'user')
+            .populate({ path: 'participants', populate: { path: 'user', select: 'name email' } })
+            .populate('teams', 'name')
+            .populate({ path: 'teams', populate: { path: 'members.user', select: 'name email' } })
+            .populate('tournament', 'name');
+        
+        return res.json({ success: true, match: populatedMatch });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ success: false, message: 'Failed to declare winner' });

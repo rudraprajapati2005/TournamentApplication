@@ -30,11 +30,26 @@ const TournamentDetails = () => {
   const [activeTab, setActiveTab] = useState('description');
   const [matchScores, setMatchScores] = useState({});
   const [updatingScores, setUpdatingScores] = useState({});
+  const [updatingStatus, setUpdatingStatus] = useState({});
   const [showWinnerDeclaration, setShowWinnerDeclaration] = useState(false);
   const [winners, setWinners] = useState([{ position: 1, user: null }]);
   const [declaringWinners, setDeclaringWinners] = useState(false);
   const [participantSearch, setParticipantSearch] = useState('');
   const [participantSuggestions, setParticipantSuggestions] = useState([]);
+  const [showCreateMatch, setShowCreateMatch] = useState(false);
+  const [creatingMatch, setCreatingMatch] = useState(false);
+  const [newMatch, setNewMatch] = useState({
+    matchType: 'individual',
+    round: 1,
+    participant1: '',
+    participant2: '',
+    team1: '',
+    team2: '',
+    scheduledAt: '',
+    durationMinutes: '',
+    location: '',
+    description: ''
+  });
 
   useEffect(() => {
     fetchTournamentDetails();
@@ -107,7 +122,8 @@ const TournamentDetails = () => {
         alert(data.message || 'Failed to join tournament');
       }
     } catch (err) {
-      alert('Error joining tournament');
+      const errorMessage = err.message || err.data?.message || 'Error joining tournament';
+      alert(errorMessage);
       console.error('Error:', err);
     } finally {
       setJoinLoading(false);
@@ -335,17 +351,63 @@ const TournamentDetails = () => {
     try {
       setUpdatingScores(prev => ({ ...prev, [matchId]: true }));
       const resp = await api.post(`/matches/${matchId}/declare`, overrideWinnerId && overrideModel ? { overrideWinnerId, overrideModel } : {});
-      // Optimistically update the match status and winner so page doesn't reload
+      // Update the match with the returned data
       const updatedMatch = resp.match || resp.data?.match; // api wrapper may unwrap
-      setTournament(prev => {
-        if (!prev) return prev;
-        const updatedMatches = (prev.matches || []).map(m => m._id === matchId ? { ...m, status: 'completed', winner: updatedMatch?.winner || overrideWinnerId, winnerModel: updatedMatch?.winnerModel || overrideModel } : m);
-        return { ...prev, matches: updatedMatches };
-      });
+      if (updatedMatch) {
+        setTournament(prev => {
+          if (!prev) return prev;
+          const updatedMatches = (prev.matches || []).map(m => {
+            if (m._id === matchId || m._id?.toString() === matchId?.toString()) {
+              // Merge the updated match data, preserving participants and teams if they exist
+              return {
+                ...m,
+                ...updatedMatch,
+                status: updatedMatch.status || 'completed',
+                winner: updatedMatch.winner,
+                winnerModel: updatedMatch.winnerModel,
+                participants: updatedMatch.participants || m.participants,
+                teams: updatedMatch.teams || m.teams
+              };
+            }
+            return m;
+          });
+          return { ...prev, matches: updatedMatches };
+        });
+        // Refresh tournament details to ensure we have the latest data
+        setTimeout(() => {
+          fetchTournamentDetails();
+        }, 500);
+      }
     } catch (e) {
       alert(e.response?.data?.message || e.message || 'Failed to declare winner');
     } finally {
       setUpdatingScores(prev => ({ ...prev, [matchId]: false }));
+    }
+  };
+
+  const updateMatchStatus = async (matchId, newStatus) => {
+    try {
+      setUpdatingStatus(prev => ({ ...prev, [matchId]: true }));
+      const data = await api.put(`/matches/${matchId}/status`, { status: newStatus });
+      
+      if (data.success) {
+        // Update the match status in the tournament state
+        setTournament(prev => {
+          if (!prev) return prev;
+          const updatedMatches = (prev.matches || []).map(m => 
+            m._id === matchId ? { ...m, status: newStatus, ...data.match } : m
+          );
+          return { ...prev, matches: updatedMatches };
+        });
+      } else {
+        alert(data.message || 'Failed to update match status');
+      }
+    } catch (err) {
+      const errorMessage = err.message || err.data?.message || 'Failed to update match status';
+      alert(errorMessage);
+      console.error('Error:', err);
+    } finally {
+      setUpdatingStatus(prev => ({ ...prev, [matchId]: false }));
     }
   };
 
@@ -430,6 +492,68 @@ const TournamentDetails = () => {
     setParticipantSuggestions(filtered);
   }, [participantSearch, tournament]);
 
+  const handleCreateMatch = async (e) => {
+    e.preventDefault();
+    if (!tournament) return;
+
+    try {
+      setCreatingMatch(true);
+      const matchData = {
+        tournamentId: id,
+        round: parseInt(newMatch.round),
+        matchType: newMatch.matchType,
+        scheduledAt: newMatch.scheduledAt || undefined,
+        durationMinutes: newMatch.durationMinutes || undefined,
+        location: newMatch.location || undefined,
+        description: newMatch.description || undefined
+      };
+
+      if (newMatch.matchType === 'team') {
+        if (!newMatch.team1 || !newMatch.team2) {
+          alert('Please select both teams');
+          setCreatingMatch(false);
+          return;
+        }
+        matchData.teamIds = [newMatch.team1, newMatch.team2];
+      } else {
+        if (!newMatch.participant1 || !newMatch.participant2) {
+          alert('Please select both participants');
+          setCreatingMatch(false);
+          return;
+        }
+        matchData.participantIds = [newMatch.participant1, newMatch.participant2];
+      }
+
+      const data = await api.post('/matches/create-custom', matchData);
+      
+      if (data.success) {
+        alert('Match created successfully!');
+        setShowCreateMatch(false);
+        setNewMatch({
+          matchType: 'individual',
+          round: 1,
+          participant1: '',
+          participant2: '',
+          team1: '',
+          team2: '',
+          scheduledAt: '',
+          durationMinutes: '',
+          location: '',
+          description: ''
+        });
+        await fetchTournamentDetails();
+      } else {
+        alert(data.message || 'Failed to create match');
+      }
+    } catch (err) {
+      const errorMessage = err.message || err.data?.message || 'Failed to create match';
+      alert(errorMessage);
+      console.error('Error:', err);
+    } finally {
+      setCreatingMatch(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="tournament-details-container">
@@ -453,6 +577,256 @@ const TournamentDetails = () => {
 
   return (
     <div className="tournament-page">
+      {/* Create Match Modal */}
+      {showCreateMatch && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }} onClick={() => setShowCreateMatch(false)}>
+          <div style={{
+            background: 'white',
+            padding: '2rem',
+            borderRadius: '12px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto',
+            position: 'relative'
+          }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginTop: 0 }}>Create Custom Match</h2>
+            <form onSubmit={handleCreateMatch}>
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Match Type</label>
+                <select
+                  value={newMatch.matchType}
+                  onChange={(e) => setNewMatch({ ...newMatch, matchType: e.target.value, participant1: '', participant2: '', team1: '', team2: '' })}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px'
+                  }}
+                >
+                  <option value="individual">Individual</option>
+                  <option value="team">Team</option>
+                </select>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Round</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={newMatch.round}
+                  onChange={(e) => setNewMatch({ ...newMatch, round: e.target.value })}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px'
+                  }}
+                />
+              </div>
+
+              {newMatch.matchType === 'team' ? (
+                <>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Team 1</label>
+                    <select
+                      value={newMatch.team1}
+                      onChange={(e) => setNewMatch({ ...newMatch, team1: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px'
+                      }}
+                    >
+                      <option value="">Select Team 1</option>
+                      {tournament?.teams?.filter(t => !t.isOrganizing).map(team => (
+                        <option key={team._id} value={team._id}>{team.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Team 2</label>
+                    <select
+                      value={newMatch.team2}
+                      onChange={(e) => setNewMatch({ ...newMatch, team2: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px'
+                      }}
+                    >
+                      <option value="">Select Team 2</option>
+                      {tournament?.teams?.filter(t => !t.isOrganizing && t._id !== newMatch.team1).map(team => (
+                        <option key={team._id} value={team._id}>{team.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Participant 1</label>
+                    <select
+                      value={newMatch.participant1}
+                      onChange={(e) => setNewMatch({ ...newMatch, participant1: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px'
+                      }}
+                    >
+                      <option value="">Select Participant 1</option>
+                      {tournament?.participants?.map(participant => (
+                        <option key={participant._id} value={participant._id}>
+                          {participant.user?.name || participant.user?.email || 'Unknown'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Participant 2</label>
+                    <select
+                      value={newMatch.participant2}
+                      onChange={(e) => setNewMatch({ ...newMatch, participant2: e.target.value })}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem 0.75rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px'
+                      }}
+                    >
+                      <option value="">Select Participant 2</option>
+                      {tournament?.participants?.filter(p => p._id !== newMatch.participant1).map(participant => (
+                        <option key={participant._id} value={participant._id}>
+                          {participant.user?.name || participant.user?.email || 'Unknown'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Scheduled Date & Time (Optional)</label>
+                <input
+                  type="datetime-local"
+                  value={newMatch.scheduledAt}
+                  onChange={(e) => setNewMatch({ ...newMatch, scheduledAt: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Duration (minutes, Optional)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={newMatch.durationMinutes}
+                  onChange={(e) => setNewMatch({ ...newMatch, durationMinutes: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Location (Optional)</label>
+                <input
+                  type="text"
+                  value={newMatch.location}
+                  onChange={(e) => setNewMatch({ ...newMatch, location: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Description (Optional)</label>
+                <textarea
+                  value={newMatch.description}
+                  onChange={(e) => setNewMatch({ ...newMatch, description: e.target.value })}
+                  rows="3"
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateMatch(false)}
+                  style={{
+                    background: 'white',
+                    color: '#64748b',
+                    border: '1px solid #d1d5db',
+                    padding: '0.5rem 1rem',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    flex: 1
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingMatch}
+                  style={{
+                    background: '#10b981',
+                    color: 'white',
+                    border: 'none',
+                    padding: '0.5rem 1.5rem',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    flex: 1
+                  }}
+                >
+                  {creatingMatch ? 'Creating...' : 'Create Match'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Winner Declaration Modal */}
       {showWinnerDeclaration && (
         <div style={{
@@ -1015,13 +1389,24 @@ const TournamentDetails = () => {
         {activeTab === 'matches' && (
           <>
           <div className="tournament-info matches-section">
-            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap: 'wrap', gap: '0.5rem'}}>
               <h3>Matches</h3>
+              <div style={{display:'flex', gap:'0.5rem', flexWrap: 'wrap'}}>
+                {(canEditTournament(tournament) || (tournament && isOrganizingMember())) && (
+                  <button 
+                    className="op-btn primary" 
+                    onClick={() => setShowCreateMatch(true)}
+                    style={{background: '#10b981'}}
+                  >
+                    Add Match
+                  </button>
+                )}
               {canEditTournament(tournament) && (
                 <button className="op-btn" onClick={autoSchedule} disabled={scheduling}>
                   {scheduling ? 'Scheduling...' : 'Auto-schedule Round 1'}
                 </button>
               )}
+              </div>
             </div>
             {(tournament.matches && tournament.matches.length > 0) ? (
               <div className="matches-list">
@@ -1029,120 +1414,228 @@ const TournamentDetails = () => {
                   const isTeam = m.matchType === 'team';
                   const left = isTeam ? (m.teams?.[0]?.name || 'Team A') : (m.participants?.[0]?.user?.name || m.participants?.[0]?.name || 'Player 1');
                   const right = isTeam ? (m.teams?.[1]?.name || 'Team B') : (m.participants?.[1]?.user?.name || m.participants?.[1]?.name || 'Player 2');
+                  // Get winner information
+                  let winnerName = null;
+                  if (m.winner && m.winnerModel) {
+                    if (m.winnerModel === 'Team') {
+                      const winnerTeam = m.teams?.find(t => {
+                        const tId = t._id?.toString() || (typeof t === 'string' ? t : null);
+                        const wId = m.winner?.toString() || (typeof m.winner === 'string' ? m.winner : null);
+                        return tId === wId;
+                      });
+                      winnerName = winnerTeam?.name || 'Unknown Team';
+                    } else {
+                      // For individual matches, winner is stored as User ID
+                      // We need to find the participant whose user ID matches the winner
+                      const winnerParticipant = m.participants?.find(p => {
+                        const userId = p.user?._id?.toString() || (p.user && typeof p.user === 'string' ? p.user : null);
+                        const participantId = p._id?.toString() || (typeof p === 'string' ? p : null);
+                        const winnerId = m.winner?.toString() || (typeof m.winner === 'string' ? m.winner : null);
+                        // Check both user ID and participant ID (in case backend stores participant ID)
+                        return userId === winnerId || participantId === winnerId;
+                      });
+                      winnerName = winnerParticipant?.user?.name || winnerParticipant?.name || 'Unknown Player';
+                    }
+                  }
+
                   return (
                     <div key={m._id} className="match-card">
-                      <h4>{left} vs {right}</h4>
-                      <p>Round {m.round} • Status: {m.status}</p>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem'}}>
+                        <div>
+                          <h4 style={{margin: 0}}>Round {m.round}</h4>
+                          {!(canEditTournament(tournament) || (tournament && isOrganizingMember())) && (
+                            <p style={{margin: '0.25rem 0 0 0', fontSize: '0.75rem'}}>Status: {m.status}</p>
+                          )}
+                        </div>
+                        {(canEditTournament(tournament) || (tournament && isOrganizingMember())) && (
+                          <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                            <label style={{fontSize: '0.75rem', fontWeight: 500}}>Status:</label>
+                            <select
+                              value={m.status || 'upcoming'}
+                              onChange={(e) => updateMatchStatus(m._id, e.target.value)}
+                              disabled={updatingStatus[m._id]}
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                cursor: updatingStatus[m._id] ? 'not-allowed' : 'pointer',
+                                opacity: updatingStatus[m._id] ? 0.6 : 1
+                              }}
+                            >
+                              <option value="upcoming">Upcoming</option>
+                              <option value="started">Started</option>
+                              <option value="completed">Completed</option>
+                              <option value="cancelled">Cancelled</option>
+                            </select>
+                            {updatingStatus[m._id] && (
+                              <span style={{fontSize: '0.7rem', color: '#64748b'}}>Updating...</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {isOrganizingMember() ? (
+                        <table className="match-table">
+                          <thead>
+                            <tr>
+                              <th>Participant 1</th>
+                              <th>Score</th>
+                              <th>Participant 2</th>
+                              <th>Score</th>
+                              <th>Winner</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td style={{fontWeight: 600}}>
+                                {isTeam ? (m.teams?.[0]?.name || 'Team A') : (m.participants?.[0]?.user?.name || m.participants?.[0]?.name || 'Player 1')}
+                              </td>
+                              <td>
+                                <div className="score-input-group">
+                                  <input
+                                    type="number"
+                                    className="score-input"
+                                    placeholder="0"
+                                    value={(matchScores[m._id]?.[isTeam ? m.teams?.[0]?._id : m.participants?.[0]?.user?._id] ?? '')}
+                                    onChange={(e) => setLocalScore(m._id, isTeam ? m.teams?.[0]?._id : m.participants?.[0]?.user?._id, e.target.value)}
+                                  />
+                                  <button
+                                    className="update-score-btn"
+                                    disabled={updatingScores[m._id]}
+                                    onClick={() => updateMatchScore(
+                                      m._id,
+                                      isTeam ? undefined : m.participants?.[0]?.user?._id,
+                                      isTeam ? m.teams?.[0]?._id : undefined,
+                                      Number(matchScores[m._id]?.[isTeam ? m.teams?.[0]?._id : m.participants?.[0]?.user?._id] || 0),
+                                      {}
+                                    )}
+                                    style={{padding: '0.25rem 0.5rem', fontSize: '0.75rem'}}
+                                  >Save</button>
+                                </div>
+                              </td>
+                              <td style={{fontWeight: 600}}>
+                                {isTeam ? (m.teams?.[1]?.name || 'Team B') : (m.participants?.[1]?.user?.name || m.participants?.[1]?.name || 'Player 2')}
+                              </td>
+                              <td>
+                                <div className="score-input-group">
+                                  <input
+                                    type="number"
+                                    className="score-input"
+                                    placeholder="0"
+                                    value={(matchScores[m._id]?.[isTeam ? m.teams?.[1]?._id : m.participants?.[1]?.user?._id] ?? '')}
+                                    onChange={(e) => setLocalScore(m._id, isTeam ? m.teams?.[1]?._id : m.participants?.[1]?.user?._id, e.target.value)}
+                                  />
+                                  <button
+                                    className="update-score-btn"
+                                    disabled={updatingScores[m._id]}
+                                    onClick={() => updateMatchScore(
+                                      m._id,
+                                      isTeam ? undefined : m.participants?.[1]?.user?._id,
+                                      isTeam ? m.teams?.[1]?._id : undefined,
+                                      Number(matchScores[m._id]?.[isTeam ? m.teams?.[1]?._id : m.participants?.[1]?.user?._id] || 0),
+                                      {}
+                                    )}
+                                    style={{padding: '0.25rem 0.5rem', fontSize: '0.75rem'}}
+                                  >Save</button>
+                                </div>
+                              </td>
+                              <td style={{fontWeight: winnerName ? 600 : 400, color: winnerName ? '#10b981' : '#64748b'}}>
+                                {winnerName || '-'}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      ) : (
+                        <table className="match-table">
+                          <thead>
+                            <tr>
+                              <th>Participant 1</th>
+                              <th>Score</th>
+                              <th>Participant 2</th>
+                              <th>Score</th>
+                              <th>Winner</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td style={{fontWeight: 600}}>
+                                {isTeam ? (m.teams?.[0]?.name || 'Team A') : (m.participants?.[0]?.user?.name || m.participants?.[0]?.name || 'Player 1')}
+                              </td>
+                              <td>
+                                {matchScores[m._id]?.[isTeam ? m.teams?.[0]?._id : m.participants?.[0]?.user?._id] ?? '-'}
+                              </td>
+                              <td style={{fontWeight: 600}}>
+                                {isTeam ? (m.teams?.[1]?.name || 'Team B') : (m.participants?.[1]?.user?.name || m.participants?.[1]?.name || 'Player 2')}
+                              </td>
+                              <td>
+                                {matchScores[m._id]?.[isTeam ? m.teams?.[1]?._id : m.participants?.[1]?.user?._id] ?? '-'}
+                              </td>
+                              <td style={{fontWeight: winnerName ? 600 : 400, color: winnerName ? '#10b981' : '#64748b'}}>
+                                {winnerName || '-'}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      )}
 
                       {isOrganizingMember() && (
-                        <div>
-                          <div className="match-participants">
-                            {isTeam ? (
-                              <>
-                                <div className="match-participant">
-                                  <h5>{m.teams?.[0]?.name || 'Team A'}</h5>
-                                  <div className="score-input-group">
-                                    <input
-                                      type="number"
-                                      className="score-input"
-                                      placeholder="Points"
-                                      value={(matchScores[m._id]?.[m.teams?.[0]?._id] ?? '')}
-                                      onChange={(e) => setLocalScore(m._id, m.teams?.[0]?._id, e.target.value)}
-                                    />
-                                    <button
-                                      className="update-score-btn"
-                                      disabled={updatingScores[m._id]}
-                                      onClick={() => updateMatchScore(m._id, undefined, m.teams?.[0]?._id, Number(matchScores[m._id]?.[m.teams?.[0]?._id] || 0), {})}
-                                    >Save</button>
-                                  </div>
-                                </div>
-                                <div className="match-participant">
-                                  <h5>{m.teams?.[1]?.name || 'Team B'}</h5>
-                                  <div className="score-input-group">
-                                    <input
-                                      type="number"
-                                      className="score-input"
-                                      placeholder="Points"
-                                      value={(matchScores[m._id]?.[m.teams?.[1]?._id] ?? '')}
-                                      onChange={(e) => setLocalScore(m._id, m.teams?.[1]?._id, e.target.value)}
-                                    />
-                                    <button
-                                      className="update-score-btn"
-                                      disabled={updatingScores[m._id]}
-                                      onClick={() => updateMatchScore(m._id, undefined, m.teams?.[1]?._id, Number(matchScores[m._id]?.[m.teams?.[1]?._id] || 0), {})}
-                                    >Save</button>
-                                  </div>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="match-participant">
-                                  <h5>{m.participants?.[0]?.user?.name || m.participants?.[0]?.name || 'Player 1'}</h5>
-                                  <div className="score-input-group">
-                                    <input
-                                      type="number"
-                                      className="score-input"
-                                      placeholder="Points"
-                                      value={(matchScores[m._id]?.[m.participants?.[0]?.user?._id] ?? '')}
-                                      onChange={(e) => setLocalScore(m._id, m.participants?.[0]?.user?._id, e.target.value)}
-                                    />
-                                    <button
-                                      className="update-score-btn"
-                                      disabled={updatingScores[m._id]}
-                                      onClick={() => updateMatchScore(
-                                        m._id,
-                                        m.participants?.[0]?.user?._id,
-                                        undefined,
-                                        Number(matchScores[m._id]?.[m.participants?.[0]?.user?._id] || 0),
-                                        {}
-                                      )}
-                                    >Save</button>
-                                  </div>
-                                </div>
-                                <div className="match-participant">
-                                  <h5>{m.participants?.[1]?.user?.name || m.participants?.[1]?.name || 'Player 2'}</h5>
-                                  <div className="score-input-group">
-                                    <input
-                                      type="number"
-                                      className="score-input"
-                                      placeholder="Points"
-                                      value={(matchScores[m._id]?.[m.participants?.[1]?.user?._id] ?? '')}
-                                      onChange={(e) => setLocalScore(m._id, m.participants?.[1]?.user?._id, e.target.value)}
-                                    />
-                                    <button
-                                      className="update-score-btn"
-                                      disabled={updatingScores[m._id]}
-                                      onClick={() => updateMatchScore(
-                                        m._id,
-                                        m.participants?.[1]?.user?._id,
-                                        undefined,
-                                        Number(matchScores[m._id]?.[m.participants?.[1]?.user?._id] || 0),
-                                        {}
-                                      )}
-                                    >Save</button>
-                                  </div>
-                                </div>
-                              </>
-                            )}
-                          </div>
-
-                          <div style={{display:'flex', gap:'8px', marginTop:'12px', flexWrap:'wrap'}}>
-                            <button className="op-btn" disabled={updatingScores[m._id]} onClick={() => declareWinner(m._id)}>
-                              Auto declare winner
-                            </button>
-                            {/* Manual override selection */}
-                            {isTeam ? (
-                              <>
-                                <button className="op-btn primary" disabled={updatingScores[m._id]} onClick={() => declareWinner(m._id, m.teams?.[0]?._id, 'Team')}>Set {m.teams?.[0]?.name || 'Team A'} as Winner</button>
-                                <button className="op-btn primary" disabled={updatingScores[m._id]} onClick={() => declareWinner(m._id, m.teams?.[1]?._id, 'Team')}>Set {m.teams?.[1]?.name || 'Team B'} as Winner</button>
-                              </>
-                            ) : (
-                              <>
-                                <button className="op-btn primary" disabled={updatingScores[m._id]} onClick={() => declareWinner(m._id, m.participants?.[0]?._id, 'User')}>Set {m.participants?.[0]?.user?.name || 'Player 1'} as Winner</button>
-                                <button className="op-btn primary" disabled={updatingScores[m._id]} onClick={() => declareWinner(m._id, m.participants?.[1]?._id, 'User')}>Set {m.participants?.[1]?.user?.name || 'Player 2'} as Winner</button>
-                              </>
-                            )}
-                          </div>
+                        <div style={{display:'flex', gap:'6px', marginTop:'0.75rem', flexWrap:'wrap'}}>
+                          <button 
+                            className="op-btn" 
+                            disabled={updatingScores[m._id]} 
+                            onClick={() => declareWinner(m._id)}
+                            style={{padding: '0.5rem 0.75rem', fontSize: '0.75rem'}}
+                          >
+                            Auto declare winner
+                          </button>
+                          {isTeam ? (
+                            <>
+                              <button 
+                                className="op-btn primary" 
+                                disabled={updatingScores[m._id]} 
+                                onClick={() => declareWinner(m._id, m.teams?.[0]?._id, 'Team')}
+                                style={{padding: '0.5rem 0.75rem', fontSize: '0.75rem'}}
+                              >
+                                Set {m.teams?.[0]?.name || 'Team A'} as Winner
+                              </button>
+                              <button 
+                                className="op-btn primary" 
+                                disabled={updatingScores[m._id]} 
+                                onClick={() => declareWinner(m._id, m.teams?.[1]?._id, 'Team')}
+                                style={{padding: '0.5rem 0.75rem', fontSize: '0.75rem'}}
+                              >
+                                Set {m.teams?.[1]?.name || 'Team B'} as Winner
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button 
+                                className="op-btn primary" 
+                                disabled={updatingScores[m._id]} 
+                                onClick={() => {
+                                  // Pass user ID for individual matches
+                                  const userId = m.participants?.[0]?.user?._id || m.participants?.[0]?.user;
+                                  declareWinner(m._id, userId, 'User');
+                                }}
+                                style={{padding: '0.5rem 0.75rem', fontSize: '0.75rem'}}
+                              >
+                                Set {m.participants?.[0]?.user?.name || 'Player 1'} as Winner
+                              </button>
+                              <button 
+                                className="op-btn primary" 
+                                disabled={updatingScores[m._id]} 
+                                onClick={() => {
+                                  // Pass user ID for individual matches
+                                  const userId = m.participants?.[1]?.user?._id || m.participants?.[1]?.user;
+                                  declareWinner(m._id, userId, 'User');
+                                }}
+                                style={{padding: '0.5rem 0.75rem', fontSize: '0.75rem'}}
+                              >
+                                Set {m.participants?.[1]?.user?.name || 'Player 2'} as Winner
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

@@ -65,7 +65,8 @@ const Home = () => {
       }
     } catch (error) {
       console.error('Error joining tournament:', error);
-      alert('Failed to join tournament. Please try again.');
+      const errorMessage = error.message || error.data?.message || 'Failed to join tournament. Please try again.';
+      alert(errorMessage);
     } finally {
       setActionLoading(prev => ({ ...prev, [tournamentId]: false }));
     }
